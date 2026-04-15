@@ -39,3 +39,9 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# local certs
+certificates
+
+# Claude Code local settings
+.claude/

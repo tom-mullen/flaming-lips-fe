@@ -1,26 +1,58 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+  --color-spotify: #1db954;
+  --color-spotify-hover: #1ed760;
+
+  /* Semantic surface & border tokens
+     Note: surface-alt & border-subtle share zinc-800 (#27272a);
+           surface-raised, border & faint share zinc-700 (#3f3f46).
+     These are semantically distinct — update together if shifting the palette. */
+  --color-canvas: #09090b;           /* zinc-950 — root page background */
+  --color-surface: #18181b;          /* zinc-900 — cards, sidebar */
+  --color-surface-alt: #27272a;      /* zinc-800 — inputs, muted panels */
+  --color-surface-raised: #3f3f46;   /* zinc-700 — elevated fills: badges, active chips */
+  --color-border: #3f3f46;           /* zinc-700 — default borders */
+  --color-border-subtle: #27272a;    /* zinc-800 — dividers, separators */
+  --color-border-focus: #71717a;     /* zinc-500 — focused borders */
+
+  /* Semantic text tokens (darkest → lightest) */
+  --color-faint: #3f3f46;            /* zinc-700 — decorative/barely-visible text */
+  --color-dimmed: #52525b;           /* zinc-600 — faint metadata, timestamps */
+  --color-muted: #71717a;            /* zinc-500 — secondary text */
+  --color-muted-foreground: #a1a1aa; /* zinc-400 — tertiary text */
+  --color-foreground: #d4d4d8;       /* zinc-300 — primary body text */
+
+  /* Semantic text sizes for metadata labels */
+  --text-2xs: 0.6875rem;             /* 11px — meta field labels */
+  --text-2xs--line-height: 1rem;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+/* Focus ring — single source of truth for interactive elements */
+.focus-ring {
+  @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-spotify/50;
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+/* Form control — shared surface for Input, Select, DatePicker, MultiSelect.
+   Pair with .focus-ring on the element. */
+.form-control {
+  @apply rounded-lg bg-surface-alt border border-border px-3 py-2 text-sm
+    focus:outline-none focus:border-border-focus;
 }
+
+/* Dropdown panel — shared base for Select, MultiSelect, DatePicker popover */
+.dropdown-panel {
+  @apply z-50 mt-1 rounded-xl bg-surface border border-border shadow-xl
+    focus:outline-none transition duration-100 ease-in data-[leave]:opacity-0;
+}
+
+/* Override react-day-picker selected state without !important */
+.rdp-selected .rdp-day_button {
+  background-color: var(--color-spotify);
+  color: black;
+  font-weight: 600;
+  border-radius: var(--radius-lg);
+}
+

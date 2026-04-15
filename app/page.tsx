@@ -1,65 +1,68 @@
-import Image from "next/image";
+import AppIcon from "./components/app-icon";
+import LoginButton from "./components/login-button";
+import Alert from "./components/ui/alert";
 
-export default function Home() {
+const ERROR_MESSAGES: Record<string, string> = {
+  OAuthCallback: "Could not complete sign-in. Please try again.",
+  OAuthSignin: "Could not initiate sign-in. Please try again.",
+  OAuthAccountNotLinked:
+    "This account is already linked to another sign-in method.",
+  AccessDenied: "You do not have permission to sign in.",
+  Configuration: "There is a problem with the server configuration.",
+  // Legacy codes
+  access_denied: "You denied access to your account.",
+  state_mismatch:
+    "Authentication failed due to a security check. Please try again.",
+  token_exchange_failed: "Could not complete sign-in. Please try again.",
+};
+
+export default async function HomePage({
+  searchParams,
+}: {
+  searchParams: Promise<{ error?: string; redirect?: string }>;
+}) {
+  const { error, redirect } = await searchParams;
+  const errorMessage = error
+    ? (ERROR_MESSAGES[error] ?? "Something went wrong. Please try again.")
+    : null;
+
+  const callbackUrl = redirect ? `/${redirect}` : undefined;
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
+    <div className="bg-canvas flex min-h-screen flex-col items-center justify-center px-4">
+      <div className="w-full max-w-sm">
+        <div className="mb-10 flex justify-center">
+          <AppIcon className="text-white size-10" />
+        </div>
+
+        <div className="bg-surface rounded-2xl px-8 py-10 shadow-xl">
+          <h1 className="mb-1 text-center text-2xl font-bold text-white">
+            Welcome
           </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
+          <p className="text-muted-foreground mb-8 text-center text-sm">
+            Sign in to get started
           </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
+
+          {errorMessage && (
+            <Alert className="mb-6 text-center">{errorMessage}</Alert>
+          )}
+
+          <div className="flex flex-col gap-3">
+            <LoginButton provider="google" callbackUrl={callbackUrl} />
+            <LoginButton
+              provider="microsoft-entra-id"
+              callbackUrl={callbackUrl}
             />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+            <LoginButton provider="spotify" callbackUrl={callbackUrl} />
+          </div>
         </div>
-      </main>
+
+        <p className="text-dimmed mt-6 text-center text-xs">
+          By continuing, you agree to our{" "}
+          <span className="text-muted">Terms of Service</span> and{" "}
+          <span className="text-muted">Privacy Policy</span>.
+        </p>
+      </div>
     </div>
   );
 }
