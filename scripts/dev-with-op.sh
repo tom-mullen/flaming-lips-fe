@@ -4,7 +4,7 @@
 # Requires:
 #   - `op` CLI (https://developer.1password.com/docs/cli/)
 #   - A 1Password item named `flaming-lips-fe` with these fields:
-#       AUTH_SECRET, CLIENT_ID, CLIENT_SECRET,
+#       AUTH_SECRET, SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET,
 #       NEXT_PUBLIC_API_URL, AUTH_URL
 #   - A .env.op.local file in the repo root with OP_ACCOUNT and OP_VAULT set
 #     (see .env.op.local.example).

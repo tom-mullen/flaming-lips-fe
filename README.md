@@ -197,8 +197,8 @@ If you use 1Password, secrets can be injected at runtime instead of stored on di
 
 1. **Create a 1Password item** named `flaming-lips-fe` in any vault you choose, with these fields:
    - `AUTH_SECRET` — Auth.js secret (must match the Go API)
-   - `CLIENT_ID` — Spotify OAuth client ID
-   - `CLIENT_SECRET` — Spotify OAuth client secret
+   - `SPOTIFY_CLIENT_ID` — Spotify OAuth client ID
+   - `SPOTIFY_CLIENT_SECRET` — Spotify OAuth client secret
    - `NEXT_PUBLIC_API_URL` — Go API origin
    - `AUTH_URL` — frontend origin
 
