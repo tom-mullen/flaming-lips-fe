@@ -107,7 +107,7 @@ proxy.ts                      # Protected route redirect (Next.js 16 replacement
 
 - **Protected routes use `proxy.ts`**, not `middleware.ts`. In Next.js 16, the middleware convention has been renamed. The `proxy.ts` file redirects unauthenticated users from protected routes to `/`.
 - **The Go API is the authority for all persistence.** This frontend owns no data — it renders, validates, and dispatches.
-- **WebSockets carry long-running job events.** Two streams are in active use: `/uploads/stream/{batchId}` for document extraction events, and `/jobs/{id}/stream` for background jobs. Both authenticate via a `?jwt=<token>` query param because the browser WebSocket API cannot set custom headers.
+- **WebSockets carry long-running job events.** All job progress — including upload extraction, parsing, ingestion, and enrichment — streams through `/jobs/{id}/stream`. Consumers attach via the shared `useJobStream` hook. The stream authenticates via a `?jwt=<token>` query param because the browser WebSocket API cannot set custom headers.
 
 ---
 

@@ -8,7 +8,7 @@ import Alert from "@/app/components/ui/alert";
 import PageLayout from "@/app/components/ui/page-layout";
 import Spinner from "@/app/components/ui/spinner";
 import { useCatalogs } from "@/app/lib/queries";
-import { api, apiPost, API_URL, getAccessToken, wsUrl } from "@/app/lib/api";
+import { api, apiPost, API_URL, getAccessToken } from "@/app/lib/api";
 import type { Job } from "@/app/lib/types";
 import { useJobStream } from "@/app/lib/hooks/use-job-stream";
 import type { Step, AnalyzeDocument } from "./types";
@@ -21,6 +21,14 @@ import UploadStep from "./upload-step";
 import ImportStep from "./import-step";
 import EnrichStep from "./enrich-step";
 import DoneStep from "./done-step";
+
+interface UploadFileEvent {
+  status: "document" | "skipped" | "error";
+  document?: AnalyzeDocument;
+  skipped?: string;
+  reason?: string;
+  error?: string;
+}
 
 export default function AnalyzePage() {
   const store = useAnalyzeStore();
@@ -75,6 +83,48 @@ export default function AnalyzePage() {
   useUppyEvent(uppy, "cancel-all", useCallback(() => {
     setStep("assign");
   }, []));
+
+  // ── Upload job stream (per-file extraction events) ──
+  const uploadCtxRef = useRef<{
+    catalogId: string;
+    catalogName: string;
+    batchId: string;
+    documents: AnalyzeDocument[];
+    skipped: { filename: string; reason: string }[];
+  } | null>(null);
+
+  const { connect: connectUpload, close: closeUpload } = useJobStream({
+    onEvent: useCallback((data: Record<string, unknown>) => {
+      const event = data as unknown as UploadFileEvent;
+      const ctx = uploadCtxRef.current;
+      if (event.status === "document" && event.document) {
+        if (ctx) ctx.documents.push(event.document);
+        const doc = event.document;
+        setDocuments((prev) => [...prev, doc]);
+      } else if (event.status === "skipped" && event.skipped) {
+        const entry = { filename: event.skipped, reason: event.reason ?? "" };
+        if (ctx) ctx.skipped.push(entry);
+        setSkipped((prev) => [...prev, entry]);
+      } else if (event.status === "error" && event.error) {
+        setError(event.error);
+      }
+    }, []),
+    onDone: useCallback(() => {
+      setImportDone(true);
+      const ctx = uploadCtxRef.current;
+      if (ctx) {
+        store.save({
+          step: "importing",
+          catalogId: ctx.catalogId,
+          catalogName: ctx.catalogName,
+          batchId: ctx.batchId,
+          documents: ctx.documents,
+          skipped: ctx.skipped,
+        });
+      }
+    }, [store]),
+    onError: useCallback((msg: string) => setError(msg), []),
+  });
 
   // ── Enrich job stream (enrichment artifact — kept for future re-integration) ──
   const { connect: connectEnrich } = useJobStream({
@@ -212,17 +262,23 @@ export default function AnalyzePage() {
 
     // Init batch
     let batchId: string;
+    let jobId: string;
     try {
-      const initData = await apiPost<{ batch_id: string }>("/uploads/init", {
-        catalog_id: resolvedCatalogId,
-        right_type: rights.type,
-        right_territory: rights.territory,
-        right_ownership: rights.ownership ? parseFloat(rights.ownership) : 0,
-        right_start_date: rights.startDate,
-        right_end_date: rights.endDate,
-        right_source: rights.source,
-      });
+      const initData = await apiPost<{ batch_id: string; job_id: string }>(
+        "/uploads/init",
+        {
+          catalog_id: resolvedCatalogId,
+          expected_files: droppedFiles.length,
+          right_type: rights.type,
+          right_territory: rights.territory,
+          right_ownership: rights.ownership ? parseFloat(rights.ownership) : 0,
+          right_start_date: rights.startDate,
+          right_end_date: rights.endDate,
+          right_source: rights.source,
+        },
+      );
       batchId = initData.batch_id;
+      jobId = initData.job_id;
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to init upload");
       return;
@@ -239,9 +295,10 @@ export default function AnalyzePage() {
     uppy.use(Tus, {
       endpoint: tusEndpoint,
       headers: token ? { Authorization: `Bearer ${token}` } : {},
-      chunkSize: 20 * 1024 * 1024,
+      chunkSize: 50 * 1024 * 1024,
+      limit: 10,
       retryDelays: [0, 1000, 3000, 5000],
-      allowedMetaFields: ["batch_id", "filename"],
+      allowedMetaFields: ["batch_id", "job_id", "filename"],
     });
 
     // Add files to Uppy with batch metadata
@@ -253,6 +310,7 @@ export default function AnalyzePage() {
         data: file,
         meta: {
           batch_id: batchId,
+          job_id: jobId,
           filename: file.name,
         },
       });
@@ -263,42 +321,15 @@ export default function AnalyzePage() {
     setSkipped([]);
     setImportDone(false);
 
-    // Connect WebSocket for import results while uploading
-    const importedDocs: AnalyzeDocument[] = [];
-    const skippedFiles: { filename: string; reason: string }[] = [];
-    const ws = new WebSocket(wsUrl(`/uploads/stream/${batchId}`));
-
-    ws.onmessage = (event) => {
-      const msg = JSON.parse(event.data);
-      if (msg.done) {
-        setImportDone(true);
-        store.save({
-          step: "importing",
-          catalogId: resolvedCatalogId,
-          catalogName: catName,
-          batchId,
-          documents: importedDocs,
-          skipped: skippedFiles,
-        });
-        ws.close();
-      } else if (msg.document) {
-        importedDocs.push(msg.document);
-        setDocuments((prev) => [...prev, msg.document]);
-      } else if (msg.skipped) {
-        skippedFiles.push({ filename: msg.skipped, reason: msg.reason });
-        setSkipped((prev) => [
-          ...prev,
-          { filename: msg.skipped, reason: msg.reason },
-        ]);
-      } else if (msg.error) {
-        setError(msg.error);
-      }
+    // Connect job stream for import results while uploading
+    uploadCtxRef.current = {
+      catalogId: resolvedCatalogId,
+      catalogName: catName,
+      batchId,
+      documents: [],
+      skipped: [],
     };
-    ws.onerror = () => {
-      setError("WebSocket connection failed");
-      setImportDone(true);
-    };
-    ws.onclose = () => setImportDone(true);
+    connectUpload(jobId);
 
     // Start Uppy upload
     try {
@@ -312,6 +343,7 @@ export default function AnalyzePage() {
     } catch (e) {
       setError(e instanceof Error ? e.message : "Upload failed");
       setStep("assign");
+      closeUpload();
     }
   }
 
