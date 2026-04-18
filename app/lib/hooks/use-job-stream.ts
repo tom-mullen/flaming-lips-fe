@@ -9,8 +9,12 @@ interface UseJobStreamOptions {
 }
 
 /**
- * Low-level hook that opens a reconnecting WebSocket to /jobs/{id}/stream
- * and dispatches parsed messages to callbacks.
+ * Low-level hook for event-stream WebSockets. Backs both /jobs/{id}/stream
+ * (terminates on a `done` envelope) and /batches/{id}/stream (client-driven
+ * close — the server never sends `done` since a batch spans multiple jobs).
+ *
+ * connect(path) takes a full stream path so callers pick the endpoint; the
+ * hook itself is endpoint-agnostic.
  *
  * Callbacks are stored in refs so the WebSocket connection is never torn
  * down due to callback identity changes from the caller.
@@ -24,6 +28,12 @@ export function useJobStream({
   const onEventRef = useRef(onEvent);
   const onDoneRef = useRef(onDone);
   const onErrorRef = useRef(onError);
+  // Last server-assigned seq the client has ingested. Sent as ?after_seq on
+  // every (re)connect so the server resumes from there instead of replaying
+  // from 0. Without this, every transient reconnect redelivered the whole
+  // stream and inflated FE counters (e.g. 1875/625 parsed for a 625-doc batch
+  // after two reconnects).
+  const lastSeqRef = useRef(0);
 
   useEffect(() => {
     onEventRef.current = onEvent;
@@ -31,10 +41,19 @@ export function useJobStream({
     onErrorRef.current = onError;
   });
 
-  const connect = useCallback((jobId: string) => {
+  const connect = useCallback((path: string) => {
     wsRef.current?.close();
+    lastSeqRef.current = 0;
 
-    const ws = new ReconnectingWebSocket(wsUrl(`/jobs/${jobId}/stream`), [], {
+    // ReconnectingWebSocket accepts a url-provider function, invoked on
+    // every (re)connect — perfect for threading the evolving after_seq
+    // cursor through without rebuilding the socket ourselves.
+    const urlProvider = () => {
+      const sep = path.includes("?") ? "&" : "?";
+      return wsUrl(`${path}${sep}after_seq=${lastSeqRef.current}`);
+    };
+
+    const ws = new ReconnectingWebSocket(urlProvider, [], {
       maxRetries: 5,
     });
     wsRef.current = ws;
@@ -45,6 +64,9 @@ export function useJobStream({
         onDoneRef.current(msg);
         ws.close();
       } else if (msg.data) {
+        if (typeof msg.seq === "number") {
+          lastSeqRef.current = msg.seq;
+        }
         const data =
           typeof msg.data === "string" ? JSON.parse(msg.data) : msg.data;
         onEventRef.current(data);

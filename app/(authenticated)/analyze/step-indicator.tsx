@@ -7,7 +7,6 @@ const STEP_ORDER: Step[] = [
   "assign",
   "uploading",
   "importing",
-  "enrich",
   "done",
 ];
 
@@ -21,8 +20,9 @@ export default function StepIndicator({ current }: { current: Step }) {
         const isActive =
           thisIdx === currentIdx ||
           (s.key === "importing" &&
-            (current === "uploading" || current === "importing")) ||
-          (s.key === "enrich" && (current === "enrich" || current === "done"));
+            (current === "uploading" ||
+              current === "importing" ||
+              current === "done"));
         const isPast = thisIdx < currentIdx;
 
         return (

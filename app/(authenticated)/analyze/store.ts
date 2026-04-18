@@ -2,15 +2,18 @@ import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 import type { Step, AnalyzeDocument } from "./types";
 
+// Works are NOT persisted — they're rebuilt from the batch stream replay on
+// restore, and their nested recordings/releases arrays blow past the ~5MB
+// sessionStorage quota on larger batches.
 interface AnalyzeBookmark {
   step: Step;
   catalogId: string;
   catalogName: string;
   batchId: string;
-  enrichJobId: string | null;
   documents: AnalyzeDocument[];
   skipped: { filename: string; reason: string }[];
-  enrichedCount: number;
+  parseCompleteCount: number;
+  ingestCompleteCount: number;
   createdAt: number;
 }
 
@@ -28,10 +31,10 @@ const INITIAL: AnalyzeBookmark = {
   catalogId: "",
   catalogName: "",
   batchId: "",
-  enrichJobId: null,
   documents: [],
   skipped: [],
-  enrichedCount: 0,
+  parseCompleteCount: 0,
+  ingestCompleteCount: 0,
   createdAt: 0,
 };
 
@@ -63,10 +66,10 @@ export const useAnalyzeStore = create<AnalyzeStore>()(
         catalogId: state.catalogId,
         catalogName: state.catalogName,
         batchId: state.batchId,
-        enrichJobId: state.enrichJobId,
         documents: state.documents,
         skipped: state.skipped,
-        enrichedCount: state.enrichedCount,
+        parseCompleteCount: state.parseCompleteCount,
+        ingestCompleteCount: state.ingestCompleteCount,
         createdAt: state.createdAt,
       }),
     },

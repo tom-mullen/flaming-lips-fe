@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef, useMemo } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import Uppy from "@uppy/core";
 import Tus from "@uppy/tus";
 import { useUppyEvent } from "@uppy/react";
@@ -9,9 +9,14 @@ import PageLayout from "@/app/components/ui/page-layout";
 import Spinner from "@/app/components/ui/spinner";
 import { useCatalogs } from "@/app/lib/queries";
 import { api, apiPost, API_URL, getAccessToken } from "@/app/lib/api";
-import type { Job } from "@/app/lib/types";
 import { useJobStream } from "@/app/lib/hooks/use-job-stream";
-import type { Step, AnalyzeDocument } from "./types";
+import type {
+  Step,
+  AnalyzeDocument,
+  AnalyzeWork,
+  AnalyzeRecordingRef,
+  AnalyzeReleaseRef,
+} from "./types";
 import { INITIAL_STATE } from "./types";
 import { useAnalyzeStore, useAnalyzeStoreHydrated } from "./store";
 import StepIndicator from "./step-indicator";
@@ -19,15 +24,27 @@ import DropStep from "./drop-step";
 import AssignStep, { type RightsDefaults } from "./assign-step";
 import UploadStep from "./upload-step";
 import ImportStep from "./import-step";
-import EnrichStep from "./enrich-step";
 import DoneStep from "./done-step";
 
+// Shapes the batch stream carries. Distinct payloads multiplexed on one
+// WebSocket — the routeBatchEvent switch below picks the right handler.
 interface UploadFileEvent {
   status: "document" | "skipped" | "error";
   document?: AnalyzeDocument;
   skipped?: string;
   reason?: string;
   error?: string;
+}
+
+interface WorkIngestedEvent {
+  type: "work_ingested";
+  work_id: string;
+  title: string;
+  artist: string;
+  iswc?: string;
+  document_id: string;
+  recording?: AnalyzeRecordingRef;
+  release?: AnalyzeReleaseRef;
 }
 
 export default function AnalyzePage() {
@@ -37,15 +54,15 @@ export default function AnalyzePage() {
   const [droppedFiles, setDroppedFiles] = useState<File[]>([]);
   const [assignedCatalogId, setAssignedCatalogId] = useState("");
   const [assignedCatalogName, setAssignedCatalogName] = useState("");
+  const [batchId, setBatchId] = useState("");
   const [documents, setDocuments] = useState<AnalyzeDocument[]>([]);
   const [skipped, setSkipped] = useState<
     { filename: string; reason: string }[]
   >([]);
+  const [works, setWorks] = useState<AnalyzeWork[]>([]);
+  const [parseCompleteCount, setParseCompleteCount] = useState(0);
+  const [ingestCompleteCount, setIngestCompleteCount] = useState(0);
   const [importDone, setImportDone] = useState(false);
-  const [enriching, setEnriching] = useState(false);
-  const [enrichIndex, setEnrichIndex] = useState(0);
-  const [enrichTotal, setEnrichTotal] = useState(0);
-  const [enrichedCount, setEnrichedCount] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [restoring, setRestoring] = useState(true);
 
@@ -55,152 +72,221 @@ export default function AnalyzePage() {
   const { data: catalogsPage } = useCatalogs();
   const catalogs = catalogsPage?.items ?? [];
 
-  // ── Uppy instance (stable across renders) ──
-  const uppyRef = useRef<InstanceType<typeof Uppy> | null>(null);
-  if (!uppyRef.current) {
-    uppyRef.current = new Uppy({
-      autoProceed: false,
-    });
-  }
-  const uppy = uppyRef.current;
+  // Uppy instance — lazy-init via useState so the instance is created once
+  // and stable across renders without touching refs during render.
+  const [uppy] = useState<InstanceType<typeof Uppy>>(
+    () => new Uppy({ autoProceed: false }),
+  );
 
-  // Clean up Uppy on unmount
   useEffect(() => {
     return () => {
-      uppyRef.current?.cancelAll();
+      uppy.cancelAll();
     };
-  }, []);
+  }, [uppy]);
 
-  // ── Uppy events ──
-  useUppyEvent(uppy, "complete", useCallback(() => {
-    // All tus uploads done — extraction is handled via WebSocket
-  }, []));
+  useUppyEvent(
+    uppy,
+    "error",
+    useCallback((error: Error) => {
+      setError(error.message || "Upload failed");
+    }, []),
+  );
 
-  useUppyEvent(uppy, "error", useCallback((error: Error) => {
-    setError(error.message || "Upload failed");
-  }, []));
+  // Only rewind to "assign" if an upload was actually in flight. The cleanup
+  // effect above calls uppy.cancelAll() on unmount (fired twice under React
+  // StrictMode on initial mount), which would otherwise kick us off "drop".
+  useUppyEvent(
+    uppy,
+    "cancel-all",
+    useCallback(() => {
+      setStep((cur) => (cur === "uploading" ? "assign" : cur));
+    }, []),
+  );
 
-  useUppyEvent(uppy, "cancel-all", useCallback(() => {
-    setStep("assign");
-  }, []));
-
-  // ── Upload job stream (per-file extraction events) ──
-  const uploadCtxRef = useRef<{
+  // ── Batch event stream ──
+  //
+  // One WebSocket carries events from every stage of the upload → parse →
+  // ingest chain. Routing is by shape (existing events) or explicit
+  // discriminator (new events introduced with the batch stream):
+  //   - { status: "document" | "skipped" | "error" } → UploadFileEvent
+  //   - { type: "upload_complete" }                   → extraction phase done
+  //   - { type: "work_ingested" }                     → one work appeared
+  //   - { type: "parse_complete",  parse_result_id, status, ... }
+  //   - { type: "ingest_complete", parse_result_id, status, ... }
+  const batchCtxRef = useRef<{
     catalogId: string;
     catalogName: string;
     batchId: string;
-    documents: AnalyzeDocument[];
-    skipped: { filename: string; reason: string }[];
   } | null>(null);
 
-  const { connect: connectUpload, close: closeUpload } = useJobStream({
-    onEvent: useCallback((data: Record<string, unknown>) => {
+  const routeBatchEvent = useCallback((data: Record<string, unknown>) => {
+    // Explicit discriminator first — upload_complete and work_ingested are
+    // the two events introduced with the batch stream.
+    if (data.type === "upload_complete") {
+      setImportDone(true);
+      return;
+    }
+    if (data.type === "work_ingested") {
+      const w = data as unknown as WorkIngestedEvent;
+      setWorks((prev) => {
+        const existing = prev.find((x) => x.work_id === w.work_id);
+        if (!existing) {
+          return [
+            ...prev,
+            {
+              work_id: w.work_id,
+              title: w.title,
+              artist: w.artist,
+              iswc: w.iswc,
+              document_id: w.document_id,
+              recordings: w.recording ? [w.recording] : [],
+              releases: w.release ? [w.release] : [],
+            },
+          ];
+        }
+        // Merge the row's attachments into the existing work card.
+        // Dedupe by id so repeated rows for the same recording/release
+        // don't stack.
+        const recordings =
+          w.recording &&
+          !existing.recordings.some((r) => r.id === w.recording!.id)
+            ? [...existing.recordings, w.recording]
+            : existing.recordings;
+        const releases =
+          w.release && !existing.releases.some((r) => r.id === w.release!.id)
+            ? [...existing.releases, w.release]
+            : existing.releases;
+        if (recordings === existing.recordings && releases === existing.releases) {
+          return prev;
+        }
+        return prev.map((x) =>
+          x.work_id === w.work_id ? { ...x, recordings, releases } : x,
+        );
+      });
+      return;
+    }
+
+    // Upload worker events — retained shape from the pre-batch-stream era.
+    if (
+      data.status === "document" ||
+      data.status === "skipped" ||
+      data.status === "error"
+    ) {
       const event = data as unknown as UploadFileEvent;
-      const ctx = uploadCtxRef.current;
       if (event.status === "document" && event.document) {
-        if (ctx) ctx.documents.push(event.document);
         const doc = event.document;
-        setDocuments((prev) => [...prev, doc]);
+        setDocuments((prev) =>
+          prev.some((d) => d.id === doc.id) ? prev : [...prev, doc],
+        );
       } else if (event.status === "skipped" && event.skipped) {
         const entry = { filename: event.skipped, reason: event.reason ?? "" };
-        if (ctx) ctx.skipped.push(entry);
-        setSkipped((prev) => [...prev, entry]);
+        setSkipped((prev) =>
+          prev.some((s) => s.filename === entry.filename)
+            ? prev
+            : [...prev, entry],
+        );
       } else if (event.status === "error" && event.error) {
         setError(event.error);
       }
-    }, []),
-    onDone: useCallback(() => {
-      setImportDone(true);
-      const ctx = uploadCtxRef.current;
-      if (ctx) {
-        store.save({
-          step: "importing",
-          catalogId: ctx.catalogId,
-          catalogName: ctx.catalogName,
-          batchId: ctx.batchId,
-          documents: ctx.documents,
-          skipped: ctx.skipped,
-        });
-      }
-    }, [store]),
-    onError: useCallback((msg: string) => setError(msg), []),
-  });
+      return;
+    }
 
-  // ── Enrich job stream (enrichment artifact — kept for future re-integration) ──
-  const { connect: connectEnrich } = useJobStream({
-    onEvent: useCallback((data: Record<string, unknown>) => {
-      const enrichData = data as {
-        index?: number;
-        total?: number;
-      };
-      setEnrichIndex((enrichData.index as number) ?? 0);
-      setEnrichTotal((enrichData.total as number) ?? 0);
-    }, []),
-    onDone: useCallback((msg: { done: boolean; progress?: number }) => {
-      setEnriching(false);
-      setEnrichedCount(msg.progress ?? 0);
-      setStep("done");
-    }, []),
+    // Parse and ingest completion events — both carry parse_result_id +
+    // status, so we discriminate on the explicit `type` field (added on the
+    // backend to stop the FE from double-counting each document).
+    if (data.type === "parse_complete") {
+      setParseCompleteCount((n) => n + 1);
+      return;
+    }
+    if (data.type === "ingest_complete") {
+      setIngestCompleteCount((n) => n + 1);
+      return;
+    }
+    // Other envelopes fall through silently — still visible in network tab.
+  }, []);
+
+  const { connect: connectBatch, close: closeBatch } = useJobStream({
+    onEvent: routeBatchEvent,
+    // Batch stream never sends `done` — the server can't know when the
+    // client considers the batch finished (see handlers.StreamBatch).
+    onDone: useCallback(() => {}, []),
     onError: useCallback((msg: string) => setError(msg), []),
   });
 
   // ── Determine if restore is needed ──
   const hasResumableBookmark =
-    !!store.catalogId &&
+    !!store.batchId &&
     store.step !== "drop" &&
     !store.isStale() &&
     store.step !== "assign" &&
     store.step !== "uploading";
 
   if (hydrated && !hasResumableBookmark && restoring && !restored) {
-    if (store.catalogId) store.clear();
+    if (store.batchId) store.clear();
     setRestoring(false);
     setRestored(true);
   }
 
   // ── Restore from session bookmark ──
+  //
+  // setState calls inside the effect are the whole point — we're rehydrating
+  // React state from the async-hydrated zustand store. Splitting into
+  // derived state / lazy initializers would require hoisting the store read
+  // into useState initializers, which run before zustand has hydrated.
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     if (!hydrated || restored || !hasResumableBookmark) return;
 
+    setRestored(true);
     (async () => {
-      setRestored(true);
       try {
-        setAssignedCatalogId(store.catalogId);
-        setAssignedCatalogName(store.catalogName);
-        setDocuments(store.documents);
-        setSkipped(store.skipped);
-        setImportDone(true);
-
-        if (store.step === "importing") {
-          setStep("importing");
+        // Verify the batch still exists server-side before committing to
+        // the restore — guards against bookmarks that point at batches
+        // whose rows were deleted (e.g. after a dev DB reset).
+        const jobs = await api<unknown[]>(`/batches/${store.batchId}/jobs`);
+        if (!Array.isArray(jobs) || jobs.length === 0) {
+          store.clear();
           setRestoring(false);
           return;
         }
 
-        if (store.step === "done") {
-          setEnrichedCount(store.enrichedCount);
+        setAssignedCatalogId(store.catalogId);
+        setAssignedCatalogName(store.catalogName);
+        setBatchId(store.batchId);
+        setDocuments(store.documents);
+        setSkipped(store.skipped);
+
+        // Legacy sessions persisted `step: "ingesting"` before the step
+        // collapsed into "importing"; treat it as importing + importDone.
+        const savedStep = store.step as string;
+        if (savedStep === "importing" || savedStep === "ingesting") {
+          setStep("importing");
+          setImportDone(savedStep === "ingesting");
+        } else if (savedStep === "done") {
+          setStep("done");
+          setImportDone(true);
+          setParseCompleteCount(store.parseCompleteCount);
+          setIngestCompleteCount(store.ingestCompleteCount);
+          setRestoring(false);
+          return;
+        } else {
           setStep("done");
           setRestoring(false);
           return;
         }
 
-        // Enrich step — check job status and reconnect
-        if (store.step === "enrich" && store.enrichJobId) {
-          const job = await api<Job>(`/jobs/${store.enrichJobId}`);
-          if (job.status === "running" || job.status === "pending") {
-            setStep("enrich");
-            setEnriching(true);
-            setEnrichIndex(job.progress);
-            setEnrichTotal(job.total);
-            connectEnrich(store.enrichJobId);
-          } else {
-            setStep("done");
-          }
-          setRestoring(false);
-          return;
-        }
-
-        setStep("done");
+        batchCtxRef.current = {
+          catalogId: store.catalogId,
+          catalogName: store.catalogName,
+          batchId: store.batchId,
+        };
+        // Reconnect from seq=0 — works list and phase counts are rebuilt
+        // from the replay, so we don't rely on persisted values being in
+        // sync with the server.
+        setWorks([]);
+        setParseCompleteCount(0);
+        setIngestCompleteCount(0);
+        connectBatch(`/batches/${store.batchId}/stream`);
         setRestoring(false);
       } catch (e) {
         console.error("Failed to restore analyze session", e);
@@ -208,21 +294,55 @@ export default function AnalyzePage() {
         setRestoring(false);
       }
     })();
-  }, [hydrated, restored, hasResumableBookmark, store, connectEnrich]);
+  }, [hydrated, restored, hasResumableBookmark, store, connectBatch]);
+  /* eslint-enable react-hooks/set-state-in-effect */
+
+  // ── Persist progress whenever it changes during an active session ──
+  //
+  // IMPORTANT: depend on `save` (a stable function selector), not `store`.
+  // `useAnalyzeStore()` subscribes to the full state and returns a new
+  // reference on every store change — putting it in deps here caused an
+  // infinite loop (save → store update → new ref → effect re-fires).
+  const saveBookmark = useAnalyzeStore((s) => s.save);
+  useEffect(() => {
+    if (step === "importing" || (step === "done" && batchId)) {
+      saveBookmark({
+        step,
+        catalogId: assignedCatalogId,
+        catalogName: assignedCatalogName,
+        batchId,
+        documents,
+        skipped,
+        parseCompleteCount,
+        ingestCompleteCount,
+      });
+    }
+  }, [
+    step,
+    assignedCatalogId,
+    assignedCatalogName,
+    batchId,
+    documents,
+    skipped,
+    parseCompleteCount,
+    ingestCompleteCount,
+    saveBookmark,
+  ]);
 
   function resetAll() {
     setStep(INITIAL_STATE.step);
     setDroppedFiles(INITIAL_STATE.droppedFiles);
     setDocuments(INITIAL_STATE.documents);
     setSkipped(INITIAL_STATE.skipped);
+    setWorks(INITIAL_STATE.works);
+    setParseCompleteCount(INITIAL_STATE.parseCompleteCount);
+    setIngestCompleteCount(INITIAL_STATE.ingestCompleteCount);
     setImportDone(INITIAL_STATE.importDone);
-    setEnriching(INITIAL_STATE.enriching);
-    setEnrichIndex(INITIAL_STATE.enrichIndex);
-    setEnrichTotal(INITIAL_STATE.enrichTotal);
-    setEnrichedCount(INITIAL_STATE.enrichedCount);
     setAssignedCatalogId("");
     setAssignedCatalogName("");
+    setBatchId("");
     setError(null);
+    closeBatch();
     uppy.cancelAll();
     store.clear();
   }
@@ -235,7 +355,6 @@ export default function AnalyzePage() {
     setError(null);
     let resolvedCatalogId = catalogId;
 
-    // Create catalog if needed
     if (!resolvedCatalogId && newCatalogName.trim()) {
       try {
         const cat = await apiPost<{ id: string }>("/catalogs", {
@@ -260,9 +379,7 @@ export default function AnalyzePage() {
     setAssignedCatalogName(catName);
     setAssignedCatalogId(resolvedCatalogId);
 
-    // Init batch
-    let batchId: string;
-    let jobId: string;
+    let initBatchId: string;
     try {
       const initData = await apiPost<{ batch_id: string; job_id: string }>(
         "/uploads/init",
@@ -277,18 +394,18 @@ export default function AnalyzePage() {
           right_source: rights.source,
         },
       );
-      batchId = initData.batch_id;
-      jobId = initData.job_id;
+      initBatchId = initData.batch_id;
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to init upload");
       return;
     }
 
+    setBatchId(initBatchId);
+
     // Configure Uppy tus plugin with batch metadata
     const token = getAccessToken();
     const tusEndpoint = `${API_URL}/uploads/tus`;
 
-    // Remove old tus plugin if re-uploading
     const existingTus = uppy.getPlugin("Tus");
     if (existingTus) uppy.removePlugin(existingTus);
 
@@ -301,7 +418,6 @@ export default function AnalyzePage() {
       allowedMetaFields: ["batch_id", "job_id", "filename"],
     });
 
-    // Add files to Uppy with batch metadata
     uppy.cancelAll();
     for (const file of droppedFiles) {
       uppy.addFile({
@@ -309,8 +425,10 @@ export default function AnalyzePage() {
         type: file.type || "application/octet-stream",
         data: file,
         meta: {
-          batch_id: batchId,
-          job_id: jobId,
+          batch_id: initBatchId,
+          // job_id kept on tus metadata for compatibility with the tus
+          // handler — the upload worker still updates its tracking job.
+          job_id: initBatchId,
           filename: file.name,
         },
       });
@@ -319,31 +437,32 @@ export default function AnalyzePage() {
     setStep("uploading");
     setDocuments([]);
     setSkipped([]);
+    setWorks([]);
+    setParseCompleteCount(0);
+    setIngestCompleteCount(0);
     setImportDone(false);
 
-    // Connect job stream for import results while uploading
-    uploadCtxRef.current = {
+    batchCtxRef.current = {
       catalogId: resolvedCatalogId,
       catalogName: catName,
-      batchId,
-      documents: [],
-      skipped: [],
+      batchId: initBatchId,
     };
-    connectUpload(jobId);
+    // Open the batch stream now — earliest events (document extraction)
+    // can arrive before Uppy finishes, and replay from seq=0 catches
+    // anything emitted while the socket was still connecting.
+    connectBatch(`/batches/${initBatchId}/stream`);
 
-    // Start Uppy upload
     try {
       const result = await uppy.upload();
       if (result && result.failed && result.failed.length > 0) {
         const failedNames = result.failed.map((f) => f.name).join(", ");
         setError(`Some files failed to upload: ${failedNames}`);
       }
-      // Move to importing step once upload finishes
       setStep("importing");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Upload failed");
       setStep("assign");
-      closeUpload();
+      closeBatch();
     }
   }
 
@@ -403,19 +522,13 @@ export default function AnalyzePage() {
           documents={documents}
           skipped={skipped}
           importDone={importDone}
+          works={works}
+          parseCompleteCount={parseCompleteCount}
+          ingestCompleteCount={ingestCompleteCount}
           assignedCatalogId={assignedCatalogId}
           assignedCatalogName={assignedCatalogName}
-          onFinish={resetAll}
-        />
-      )}
-
-      {step === "enrich" && (
-        <EnrichStep
-          assignedCatalogId={assignedCatalogId}
-          assignedCatalogName={assignedCatalogName}
-          enriching={enriching}
-          enrichIndex={enrichIndex}
-          enrichTotal={enrichTotal}
+          onFinish={() => setStep("done")}
+          onReset={resetAll}
         />
       )}
 

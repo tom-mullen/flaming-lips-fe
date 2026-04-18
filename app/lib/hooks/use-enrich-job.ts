@@ -44,7 +44,7 @@ export function useEnrichJob(
           type: "enrich_songs",
           params: JSON.stringify({ song_ids: ids }),
         });
-        connect(job.id);
+        connect(`/jobs/${job.id}/stream`);
       } catch (e) {
         setError(e instanceof Error ? e.message : "Failed to start enrichment");
         setEnriching(false);

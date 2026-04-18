@@ -11,12 +11,38 @@ export interface AnalyzeDocument {
   created_at: string;
 }
 
+export interface AnalyzeRecordingRef {
+  id: string;
+  isrc?: string;
+  title?: string;
+  artist?: string;
+}
+
+export interface AnalyzeReleaseRef {
+  id: string;
+  upc?: string;
+  title?: string;
+}
+
+// AnalyzeWork is the coalesced per-work view rendered under the imported
+// docs summary. Backend emits one IngestWorkEvent per row (no dedupe) so
+// the same work can arrive multiple times with different recording/release
+// refs; the FE merges them into recordings/releases arrays keyed by id.
+export interface AnalyzeWork {
+  work_id: string;
+  title: string;
+  artist: string;
+  iswc?: string;
+  document_id: string;
+  recordings: AnalyzeRecordingRef[];
+  releases: AnalyzeReleaseRef[];
+}
+
 export type Step =
   | "drop"
   | "assign"
   | "uploading"
   | "importing"
-  | "enrich"
   | "done";
 
 export interface AnalyzeState {
@@ -26,12 +52,11 @@ export interface AnalyzeState {
   assignedCatalogName: string;
   documents: AnalyzeDocument[];
   skipped: { filename: string; reason: string }[];
+  works: AnalyzeWork[];
   importDone: boolean;
   uploadProgress: number;
-  enriching: boolean;
-  enrichIndex: number;
-  enrichTotal: number;
-  enrichedCount: number;
+  parseCompleteCount: number;
+  ingestCompleteCount: number;
   error: string | null;
 }
 
@@ -42,12 +67,11 @@ export const INITIAL_STATE: AnalyzeState = {
   assignedCatalogName: "",
   documents: [],
   skipped: [],
+  works: [],
   importDone: false,
   uploadProgress: 0,
-  enriching: false,
-  enrichIndex: 0,
-  enrichTotal: 0,
-  enrichedCount: 0,
+  parseCompleteCount: 0,
+  ingestCompleteCount: 0,
   error: null,
 };
 
@@ -55,5 +79,4 @@ export const STEP_LABELS = [
   { key: "drop", label: "Add Files" },
   { key: "assign", label: "Assign Catalog" },
   { key: "importing", label: "Import Documents" },
-  { key: "enrich", label: "Enrich via Spotify" },
 ] as const;
