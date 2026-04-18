@@ -117,6 +117,8 @@ export interface Catalog {
   created_by: string;
   created_at: string;
   updated_at: string;
+  documents_count: number;
+  works_count: number;
 }
 
 // ─── Rights ───

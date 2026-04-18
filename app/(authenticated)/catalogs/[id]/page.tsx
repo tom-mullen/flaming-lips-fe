@@ -88,6 +88,12 @@ export default function CatalogShowPage() {
           <Badge color={STATUS_BADGE_VARIANTS[catalog.status]}>
             {catalog.status}
           </Badge>
+          <div className="flex items-center gap-2">
+            <Badge color="muted">{pluralize(catalog.works_count, "work")}</Badge>
+            <Badge color="muted">
+              {pluralize(catalog.documents_count, "document")}
+            </Badge>
+          </div>
           <p className="text-muted text-xs">
             {pluralize(catalog.rights.length, "right")}
           </p>

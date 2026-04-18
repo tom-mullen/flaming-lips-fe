@@ -20,6 +20,7 @@ import {
   STATUS_COLORS,
   STATUS_BADGE_VARIANTS,
 } from "@/app/lib/constants";
+import { pluralize } from "@/app/lib/utils";
 
 export default function CatalogsPage() {
   const [newName, setNewName] = useState("");
@@ -132,6 +133,12 @@ export default function CatalogsPage() {
                         className="shrink-0"
                       >
                         {cat.status}
+                      </Badge>
+                      <Badge color="muted" className="shrink-0">
+                        {pluralize(cat.works_count, "work")}
+                      </Badge>
+                      <Badge color="muted" className="shrink-0">
+                        {pluralize(cat.documents_count, "document")}
                       </Badge>
                     </Link>
                     <div className="flex shrink-0 items-center gap-3">
