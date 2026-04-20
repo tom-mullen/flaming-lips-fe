@@ -16,7 +16,9 @@ import type {
   AnalyzeWork,
   AnalyzeRecordingRef,
   AnalyzeReleaseRef,
-  AnalyzeIngestionWarning,
+  AnalyzeBatchIssue,
+  AnalyzeParseResultIssue,
+  AnalyzeParsedRowIssue,
 } from "./types";
 import { INITIAL_STATE } from "./types";
 import { useAnalyzeStore, useAnalyzeStoreHydrated } from "./store";
@@ -29,11 +31,13 @@ import DoneStep from "./done-step";
 
 // Shapes the batch stream carries. Distinct payloads multiplexed on one
 // WebSocket — the routeBatchEvent switch below picks the right handler.
+// Skipped / error diagnostics are durable on batch_issues and fetched
+// after Phase 1 closes; the in-stream event is only used to track
+// `status: "document"` (file arrived) and surface transport errors via
+// the Alert banner while the socket is open.
 interface UploadFileEvent {
   status: "document" | "skipped" | "error";
   document?: AnalyzeDocument;
-  skipped?: string;
-  reason?: string;
   error?: string;
 }
 
@@ -57,11 +61,31 @@ export default function AnalyzePage() {
   const [assignedCatalogName, setAssignedCatalogName] = useState("");
   const [batchId, setBatchId] = useState("");
   const [documents, setDocuments] = useState<AnalyzeDocument[]>([]);
-  const [skipped, setSkipped] = useState<
-    { filename: string; reason: string }[]
-  >([]);
   const [works, setWorks] = useState<AnalyzeWork[]>([]);
-  const [warnings, setWarnings] = useState<AnalyzeIngestionWarning[]>([]);
+
+  // Durable issues fetched from dedicated endpoints — one per phase that
+  // produces them. Populated when the corresponding phase closes (and on
+  // restore). Stream events no longer carry issue detail; they carry only
+  // `issue_count` so the FE knows whether to fetch.
+  const [batchIssues, setBatchIssues] = useState<AnalyzeBatchIssue[]>([]);
+  const [parseResultIssues, setParseResultIssues] = useState<
+    AnalyzeParseResultIssue[]
+  >([]);
+  const [parsedRowIssues, setParsedRowIssues] = useState<
+    AnalyzeParsedRowIssue[]
+  >([]);
+
+  // parseResultRefs tracks parse_result_id → document_id + per-stage issue
+  // count reported by stream events. Used to (a) resolve a parse_result
+  // back to its filename when rendering fetched issues, and (b) decide
+  // which parse_results to fetch issues for (skip those with zero).
+  const [parseResultRefs, setParseResultRefs] = useState<
+    Record<
+      string,
+      { document_id: string; stage_issues: number; row_issues: number }
+    >
+  >({});
+
   const [parseCompleteCount, setParseCompleteCount] = useState(0);
   const [parseFailedCount, setParseFailedCount] = useState(0);
   const [ingestCompleteCount, setIngestCompleteCount] = useState(0);
@@ -178,6 +202,9 @@ export default function AnalyzePage() {
     }
 
     // Upload worker events — retained shape from the pre-batch-stream era.
+    // Skipped / error detail rides on batch_issues now (durable); the live
+    // event only tracks documents arriving. Errors also surface via the
+    // Alert banner until the phase closes and the durable list renders.
     if (
       data.status === "document" ||
       data.status === "skipped" ||
@@ -189,13 +216,6 @@ export default function AnalyzePage() {
         setDocuments((prev) =>
           prev.some((d) => d.id === doc.id) ? prev : [...prev, doc],
         );
-      } else if (event.status === "skipped" && event.skipped) {
-        const entry = { filename: event.skipped, reason: event.reason ?? "" };
-        setSkipped((prev) =>
-          prev.some((s) => s.filename === entry.filename)
-            ? prev
-            : [...prev, entry],
-        );
       } else if (event.status === "error" && event.error) {
         setError(event.error);
       }
@@ -203,8 +223,8 @@ export default function AnalyzePage() {
     }
 
     // Parse and ingest completion events — both carry parse_result_id +
-    // status, so we discriminate on the explicit `type` field (added on the
-    // backend to stop the FE from double-counting each document).
+    // status, so we discriminate on the explicit `type` field (added on
+    // the backend to stop the FE from double-counting each document).
     if (data.type === "parse_complete") {
       setParseCompleteCount((n) => n + 1);
       // Parse failures never enqueue an ingest job, so phase 3 needs to
@@ -212,6 +232,19 @@ export default function AnalyzePage() {
       // leave the ingest progress wedged at N-1 of N.
       if (data.status && data.status !== "complete") {
         setParseFailedCount((n) => n + 1);
+      }
+      // Track parse_result_id → document_id so we can resolve filenames
+      // when rendering issues fetched after the phase closes. Parse
+      // failures still get tracked (we'll fetch their stage-level issues
+      // too) — they carry a parse_result_id whenever the document existed.
+      const prId = typeof data.parse_result_id === "string" ? data.parse_result_id : "";
+      const docId = typeof data.document_id === "string" ? data.document_id : "";
+      if (prId && docId) {
+        setParseResultRefs((prev) =>
+          prev[prId]
+            ? prev
+            : { ...prev, [prId]: { document_id: docId, stage_issues: 0, row_issues: 0 } },
+        );
       }
       return;
     }
@@ -223,18 +256,26 @@ export default function AnalyzePage() {
       if (typeof data.royalty_lines_job_id === "string") {
         setRoyaltyLinesExpectedCount((n) => n + 1);
       }
-      // Warnings are one-per-(document, field). A single batch may produce
-      // dozens; we append flat and group at render time. Ordering isn't
-      // guaranteed across documents, so don't dedupe here — the backend
-      // already collapses per-doc samples.
-      const w = (data as { warnings?: AnalyzeIngestionWarning[] }).warnings;
-      if (Array.isArray(w) && w.length > 0) {
-        setWarnings((prev) => [...prev, ...w]);
+      const prId = typeof data.parse_result_id === "string" ? data.parse_result_id : "";
+      const count = typeof data.issue_count === "number" ? data.issue_count : 0;
+      if (prId && count > 0) {
+        setParseResultRefs((prev) => {
+          const existing = prev[prId] ?? { document_id: "", stage_issues: 0, row_issues: 0 };
+          return { ...prev, [prId]: { ...existing, stage_issues: existing.stage_issues + count } };
+        });
       }
       return;
     }
     if (data.type === "royalty_lines_complete") {
       setRoyaltyLinesCompleteCount((n) => n + 1);
+      const prId = typeof data.parse_result_id === "string" ? data.parse_result_id : "";
+      const count = typeof data.issue_count === "number" ? data.issue_count : 0;
+      if (prId && count > 0) {
+        setParseResultRefs((prev) => {
+          const existing = prev[prId] ?? { document_id: "", stage_issues: 0, row_issues: 0 };
+          return { ...prev, [prId]: { ...existing, row_issues: existing.row_issues + count } };
+        });
+      }
       return;
     }
     // Other envelopes fall through silently — still visible in network tab.
@@ -289,7 +330,6 @@ export default function AnalyzePage() {
         setAssignedCatalogName(store.catalogName);
         setBatchId(store.batchId);
         setDocuments(store.documents);
-        setSkipped(store.skipped);
 
         // Legacy sessions persisted `step: "ingesting"` before the step
         // collapsed into "importing"; treat it as importing + importDone.
@@ -317,11 +357,14 @@ export default function AnalyzePage() {
           catalogName: store.catalogName,
           batchId: store.batchId,
         };
-        // Reconnect from seq=0 — works list, warnings, and phase counts
-        // are rebuilt from the replay, so we don't rely on persisted
-        // values being in sync with the server.
+        // Reconnect from seq=0 — works list, phase counts, and issue
+        // tracking are rebuilt from the replay, so we don't rely on
+        // persisted values being in sync with the server.
         setWorks([]);
-        setWarnings([]);
+        setBatchIssues([]);
+        setParseResultIssues([]);
+        setParsedRowIssues([]);
+        setParseResultRefs({});
         setParseCompleteCount(0);
         setParseFailedCount(0);
         setIngestCompleteCount(0);
@@ -353,7 +396,6 @@ export default function AnalyzePage() {
         catalogName: assignedCatalogName,
         batchId,
         documents,
-        skipped,
         parseCompleteCount,
         ingestCompleteCount,
         royaltyLinesExpectedCount,
@@ -366,7 +408,6 @@ export default function AnalyzePage() {
     assignedCatalogName,
     batchId,
     documents,
-    skipped,
     parseCompleteCount,
     ingestCompleteCount,
     royaltyLinesExpectedCount,
@@ -374,13 +415,107 @@ export default function AnalyzePage() {
     saveBookmark,
   ]);
 
+  // ── Durable issue fetchers ──
+  //
+  // Each phase that produces issues has a dedicated endpoint. We fetch
+  // the issues once that phase closes out (and on restore when the
+  // persisted step is past that phase). Replaces the in-stream
+  // `warnings[]` field that used to ride on ingest_complete events.
+
+  // Phase 1 batch_issues — fire when importDone flips true.
+  useEffect(() => {
+    if (!importDone || !batchId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const issues = await api<AnalyzeBatchIssue[]>(`/batches/${batchId}/issues`);
+        if (!cancelled) setBatchIssues(issues);
+      } catch (e) {
+        console.error("failed to load batch issues", e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [importDone, batchId]);
+
+  // Phase 2+3 stage issues — fire when every parse_result has reported
+  // its ingest_complete (ingestResolvedCount >= total). We fetch for
+  // every tracked parse_result whose stage_issues > 0 OR that didn't
+  // yield an ingest outcome (parse failed): stage-level parse failures
+  // are persisted as parse_result_issues too.
+  const ingestResolvedTotal = ingestCompleteCount + parseFailedCount;
+  const parseAllDone =
+    importDone && documents.length > 0 && parseCompleteCount >= documents.length;
+  const ingestAllDone = parseAllDone && ingestResolvedTotal >= documents.length;
+
+  useEffect(() => {
+    if (!ingestAllDone) return;
+    const refs = Object.entries(parseResultRefs);
+    const toFetch = refs.filter(([, r]) => r.stage_issues > 0);
+    if (toFetch.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      const results = await Promise.all(
+        toFetch.map(async ([prId]) => {
+          try {
+            return await api<AnalyzeParseResultIssue[]>(
+              `/parse_results/${prId}/issues`,
+            );
+          } catch (e) {
+            console.error("failed to load parse_result issues", prId, e);
+            return [];
+          }
+        }),
+      );
+      if (cancelled) return;
+      setParseResultIssues(results.flat());
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [ingestAllDone, parseResultRefs]);
+
+  // Phase 4 row issues — fire when royalty-lines phase closes.
+  const royaltyLinesAllDone =
+    ingestAllDone && royaltyLinesCompleteCount >= royaltyLinesExpectedCount;
+
+  useEffect(() => {
+    if (!royaltyLinesAllDone) return;
+    const refs = Object.entries(parseResultRefs);
+    const toFetch = refs.filter(([, r]) => r.row_issues > 0);
+    if (toFetch.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      const results = await Promise.all(
+        toFetch.map(async ([prId]) => {
+          try {
+            return await api<AnalyzeParsedRowIssue[]>(
+              `/parse_results/${prId}/row_issues`,
+            );
+          } catch (e) {
+            console.error("failed to load parsed_row issues", prId, e);
+            return [];
+          }
+        }),
+      );
+      if (cancelled) return;
+      setParsedRowIssues(results.flat());
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [royaltyLinesAllDone, parseResultRefs]);
+
   function resetAll() {
     setStep(INITIAL_STATE.step);
     setDroppedFiles(INITIAL_STATE.droppedFiles);
     setDocuments(INITIAL_STATE.documents);
-    setSkipped(INITIAL_STATE.skipped);
     setWorks(INITIAL_STATE.works);
-    setWarnings([]);
+    setBatchIssues([]);
+    setParseResultIssues([]);
+    setParsedRowIssues([]);
+    setParseResultRefs({});
     setParseCompleteCount(INITIAL_STATE.parseCompleteCount);
     setParseFailedCount(0);
     setIngestCompleteCount(INITIAL_STATE.ingestCompleteCount);
@@ -485,9 +620,11 @@ export default function AnalyzePage() {
 
     setStep("uploading");
     setDocuments([]);
-    setSkipped([]);
     setWorks([]);
-    setWarnings([]);
+    setBatchIssues([]);
+    setParseResultIssues([]);
+    setParsedRowIssues([]);
+    setParseResultRefs({});
     setParseCompleteCount(0);
     setParseFailedCount(0);
     setIngestCompleteCount(0);
@@ -573,10 +710,12 @@ export default function AnalyzePage() {
       {step === "importing" && (
         <ImportStep
           documents={documents}
-          skipped={skipped}
           importDone={importDone}
           works={works}
-          warnings={warnings}
+          batchIssues={batchIssues}
+          parseResultIssues={parseResultIssues}
+          parsedRowIssues={parsedRowIssues}
+          parseResultRefs={parseResultRefs}
           parseCompleteCount={parseCompleteCount}
           parseFailedCount={parseFailedCount}
           ingestCompleteCount={ingestCompleteCount}

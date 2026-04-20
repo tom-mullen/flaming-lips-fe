@@ -1,7 +1,6 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import CatalogLink from "@/app/components/catalog-link";
-import SkippedFiles from "@/app/components/skipped-files";
 import Badge from "@/app/components/ui/badge";
 import Button, { buttonVariants } from "@/app/components/ui/button";
 import Card from "@/app/components/ui/card";
@@ -18,16 +17,29 @@ import { formatBytes } from "@/app/lib/utils";
 import type {
   AnalyzeDocument,
   AnalyzeWork,
-  AnalyzeIngestionWarning,
+  AnalyzeBatchIssue,
+  AnalyzeParseResultIssue,
+  AnalyzeParsedRowIssue,
   RoyaltySummary,
 } from "./types";
 
+// ParseResultRef maps a parse_result_id back to the document it belongs
+// to (plus per-stage issue counts). The page owns the mapping; this
+// component only reads it to resolve filenames for fetched issues.
+type ParseResultRef = {
+  document_id: string;
+  stage_issues: number;
+  row_issues: number;
+};
+
 export default function ImportStep({
   documents,
-  skipped,
   importDone,
   works,
-  warnings,
+  batchIssues,
+  parseResultIssues,
+  parsedRowIssues,
+  parseResultRefs,
   parseCompleteCount,
   parseFailedCount,
   ingestCompleteCount,
@@ -40,10 +52,12 @@ export default function ImportStep({
   onReset,
 }: {
   documents: AnalyzeDocument[];
-  skipped: { filename: string; reason: string }[];
   importDone: boolean;
   works: AnalyzeWork[];
-  warnings: AnalyzeIngestionWarning[];
+  batchIssues: AnalyzeBatchIssue[];
+  parseResultIssues: AnalyzeParseResultIssue[];
+  parsedRowIssues: AnalyzeParsedRowIssue[];
+  parseResultRefs: Record<string, ParseResultRef>;
   parseCompleteCount: number;
   parseFailedCount: number;
   ingestCompleteCount: number;
@@ -65,24 +79,19 @@ export default function ImportStep({
 
   const total = documents.length;
   const parseAllDone = importDone && total > 0 && parseCompleteCount >= total;
-  // Parse-phase failures (unknown payor, unrecognised file type, etc.) never
-  // enqueue an ingest job, so the ingest counter would never reach `total`.
-  // Count them as already-resolved for phase 3 progress so the bar closes
-  // out once every document has reached *a* terminal state.
+  // Parse-phase failures (unknown payor, unrecognised file type, etc.)
+  // never enqueue an ingest job, so the ingest counter would never reach
+  // `total`. Count them as already-resolved for phase 3 progress.
   const ingestResolvedCount = ingestCompleteCount + parseFailedCount;
   const ingestAllDone = parseAllDone && ingestResolvedCount >= total;
   // Phase 4's target is the number of ingest_complete events that chained
-  // a royalty_lines job (royaltyLinesExpectedCount) — NOT `total`. Parse
-  // failures, ingest failures, unknown payors, etc. all skip the chain,
-  // so targeting `total` would wedge the bar. The expectation is the
-  // ground truth for how many royalty_lines_complete events will fire.
+  // a royalty_lines job — NOT `total`. Parse / ingest failures skip the
+  // chain, so targeting `total` would wedge the bar.
   const royaltyLinesAllDone =
     ingestAllDone && royaltyLinesCompleteCount >= royaltyLinesExpectedCount;
 
   // Auto-scroll each newly-revealed phase into view as the previous one
-  // completes. One ref per phase heading + one for the summary table;
-  // each effect fires once on the transition because the boolean only
-  // flips true → true once.
+  // completes. One ref per phase heading + one for the summary table.
   const parsePhaseRef = useRef<HTMLDivElement>(null);
   const ingestPhaseRef = useRef<HTMLDivElement>(null);
   const royaltyLinesPhaseRef = useRef<HTMLDivElement>(null);
@@ -161,7 +170,9 @@ export default function ImportStep({
         </div>
       )}
 
-      {skipped.length > 0 && <SkippedFiles skipped={skipped} />}
+      {importDone && batchIssues.length > 0 && (
+        <BatchIssuesList issues={batchIssues} />
+      )}
 
       {/* Phase 2 — parse docs */}
       {importDone && (
@@ -243,8 +254,12 @@ export default function ImportStep({
             </Card>
           )}
 
-          {warnings.length > 0 && (
-            <IngestionWarningsList warnings={warnings} documents={documents} />
+          {ingestAllDone && parseResultIssues.length > 0 && (
+            <ParseResultIssuesList
+              issues={parseResultIssues}
+              documents={documents}
+              parseResultRefs={parseResultRefs}
+            />
           )}
 
           {works.length > 0 && (
@@ -366,6 +381,10 @@ export default function ImportStep({
             </Card>
           )}
 
+          {royaltyLinesAllDone && parsedRowIssues.length > 0 && (
+            <ParsedRowIssuesList issues={parsedRowIssues} />
+          )}
+
           {royaltyLinesAllDone && (
             <div ref={summaryRef} className="scroll-mt-4">
               <RoyaltySummaryTable batchId={batchId} />
@@ -420,52 +439,39 @@ function PhaseHeading({
   );
 }
 
-// Renders identifier-validation warnings grouped by severity. Systematic
-// warnings appear first with a red accent — they signal that ingestion for
-// that document aborted and usually mean the payor column mapping is
-// wrong. Row-level warnings appear below with an amber accent — ingestion
-// proceeded, N values were dropped to empty. Each card resolves the
-// document id to its filename so operators can act on the specific file.
-function IngestionWarningsList({
-  warnings,
-  documents,
-}: {
-  warnings: AnalyzeIngestionWarning[];
-  documents: AnalyzeDocument[];
-}) {
-  if (warnings.length === 0) return null;
-
-  const docById = new Map(documents.map((d) => [d.id, d]));
-  const systematic = warnings.filter((w) => w.kind === "systematic_invalid");
-  const rowLevel = warnings.filter((w) => w.kind === "row_invalid");
-
+// BatchIssuesList renders upload-phase issues from `batch_issues`.
+// Errors get a red accent (processing failure); skipped get an amber
+// accent (informational — file rejected but batch proceeded).
+function BatchIssuesList({ issues }: { issues: AnalyzeBatchIssue[] }) {
+  const errors = issues.filter((i) => i.kind === "error");
+  const skipped = issues.filter((i) => i.kind === "skipped");
   return (
     <div className="space-y-3">
       <h4 className="text-sm font-semibold text-white">
-        Warnings ({warnings.length})
+        Upload issues ({issues.length})
       </h4>
-
-      {systematic.length > 0 && (
+      {errors.length > 0 && (
         <div className="space-y-2">
-          {systematic.map((w, i) => (
-            <WarningCard
-              key={`sys-${w.document_id}-${w.field}-${i}`}
-              warning={w}
-              filename={docById.get(w.document_id)?.filename}
+          {errors.map((i) => (
+            <IssueCard
+              key={i.id}
+              title={i.filename}
+              message={i.message}
               severity="high"
+              tag="error"
             />
           ))}
         </div>
       )}
-
-      {rowLevel.length > 0 && (
+      {skipped.length > 0 && (
         <div className="space-y-2">
-          {rowLevel.map((w, i) => (
-            <WarningCard
-              key={`row-${w.document_id}-${w.field}-${i}`}
-              warning={w}
-              filename={docById.get(w.document_id)?.filename}
+          {skipped.map((i) => (
+            <IssueCard
+              key={i.id}
+              title={i.filename}
+              message={i.message || "Skipped"}
               severity="low"
+              tag="skipped"
             />
           ))}
         </div>
@@ -474,52 +480,119 @@ function IngestionWarningsList({
   );
 }
 
-function WarningCard({
-  warning,
-  filename,
+// ParseResultIssuesList renders stage-level issues from
+// `parse_result_issues`. Systematic column-mapping problems get a red
+// accent (ingestion aborted); other fatals get amber.
+function ParseResultIssuesList({
+  issues,
+  documents,
+  parseResultRefs,
+}: {
+  issues: AnalyzeParseResultIssue[];
+  documents: AnalyzeDocument[];
+  parseResultRefs: Record<string, ParseResultRef>;
+}) {
+  const docById = new Map(documents.map((d) => [d.id, d]));
+  const systematic = issues.filter((i) => i.kind === "systematic_invalid");
+  const fatal = issues.filter((i) => i.kind === "fatal");
+
+  const filenameFor = (parseResultId: string): string | undefined => {
+    const ref = parseResultRefs[parseResultId];
+    if (!ref) return undefined;
+    return docById.get(ref.document_id)?.filename;
+  };
+
+  return (
+    <div className="space-y-3">
+      <h4 className="text-sm font-semibold text-white">
+        Ingestion issues ({issues.length})
+      </h4>
+      {systematic.length > 0 && (
+        <div className="space-y-2">
+          {systematic.map((i) => (
+            <IssueCard
+              key={i.id}
+              title={
+                filenameFor(i.parse_result_id) ??
+                `parse_result ${i.parse_result_id.slice(0, 8)}`
+              }
+              tag={i.field ?? "systematic_invalid"}
+              message={i.message}
+              severity="high"
+            />
+          ))}
+        </div>
+      )}
+      {fatal.length > 0 && (
+        <div className="space-y-2">
+          {fatal.map((i) => (
+            <IssueCard
+              key={i.id}
+              title={
+                filenameFor(i.parse_result_id) ??
+                `parse_result ${i.parse_result_id.slice(0, 8)}`
+              }
+              tag={i.field ?? "fatal"}
+              message={i.message}
+              severity="high"
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ParsedRowIssuesList renders row-level issues from
+// `parsed_row_issues`. All amber — by design these are non-fatal row
+// drops during royalty_lines processing.
+function ParsedRowIssuesList({ issues }: { issues: AnalyzeParsedRowIssue[] }) {
+  return (
+    <div className="space-y-3">
+      <h4 className="text-sm font-semibold text-white">
+        Row issues ({issues.length})
+      </h4>
+      <div className="max-h-[360px] space-y-2 overflow-y-auto">
+        {issues.map((i) => (
+          <IssueCard
+            key={i.id}
+            title={`Row ${i.parsed_row_id.slice(0, 8)}`}
+            tag={i.field ?? i.severity}
+            message={i.message}
+            severity="low"
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// IssueCard is the shared card shape for all three issue lists — keeps
+// the visual language consistent across phases.
+function IssueCard({
+  title,
+  tag,
+  message,
   severity,
 }: {
-  warning: AnalyzeIngestionWarning;
-  filename: string | undefined;
+  title: string;
+  tag: string;
+  message: string;
   severity: "high" | "low";
 }) {
   const border =
     severity === "high"
       ? "border-l-4 border-l-red-500"
       : "border-l-4 border-l-amber-500";
-  const fallbackSummary =
-    severity === "high"
-      ? "Ingestion aborted — the payor column mapping is likely wrong for this file. Fix the mapping and re-upload."
-      : `${warning.invalid_count} value${warning.invalid_count === 1 ? "" : "s"} dropped to empty during ingestion. The rest of the document was ingested normally.`;
-
   return (
     <Card className={`space-y-2 rounded-xl px-4 py-3 ${border}`}>
       <div className="flex items-baseline justify-between gap-3">
-        <p className="truncate text-sm font-semibold text-white">
-          {filename ?? `Document ${warning.document_id.slice(0, 8)}`}
-        </p>
+        <p className="truncate text-sm font-semibold text-white">{title}</p>
         <span className="text-dimmed shrink-0 font-mono text-xs uppercase">
-          {warning.field}
+          {tag}
         </span>
       </div>
-      <p className="text-muted-foreground text-xs">
-        {warning.message ?? fallbackSummary}
-      </p>
-      {warning.message && (
-        <p className="text-muted-foreground text-xs">{fallbackSummary}</p>
-      )}
-      {warning.samples && warning.samples.length > 0 && (
-        <div className="text-dimmed space-y-0.5 text-xs">
-          <p className="uppercase tracking-wide">Samples</p>
-          <ul className="space-y-0.5 font-mono">
-            {warning.samples.map((s, i) => (
-              <li key={i} className="truncate">
-                {s}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
+      <p className="text-muted-foreground text-xs">{message}</p>
     </Card>
   );
 }

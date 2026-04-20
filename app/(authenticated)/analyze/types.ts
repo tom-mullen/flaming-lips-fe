@@ -38,24 +38,57 @@ export interface AnalyzeWork {
   releases: AnalyzeReleaseRef[];
 }
 
-// AnalyzeIngestionWarning mirrors the backend IngestionWarning struct
-// carried on the ingest_complete event's `warnings` field. Scoped to a
-// single (document, field) pair — a document with bad ISRCs and bad UPCs
-// will produce two warnings, and a systematic + row-level problem on the
-// same field is never both (systematic aborts ingestion).
-//   - kind "systematic_invalid": the column failed majority-validation;
-//     ingestion aborted for this document. User should fix the payor
-//     mapping and re-upload.
-//   - kind "row_invalid": individual rows dropped to empty; ingestion
-//     proceeded. Informational.
-export interface AnalyzeIngestionWarning {
-  document_id: string;
-  field: "isrc" | "upc";
-  kind: "systematic_invalid" | "row_invalid";
-  invalid_count: number;
-  checked_count?: number;
-  samples?: string[];
-  message?: string;
+// AnalyzeBatchIssue mirrors the backend BatchIssue — upload-phase
+// problems persisted to `batch_issues` and served by
+// GET /batches/{id}/issues. Durable (survives refresh), unlike the
+// in-stream `UploadFileEvent { status: "skipped" | "error" }` events
+// which fire only while the socket is open.
+//   - kind "skipped": file rejected but the batch proceeded (duplicate
+//     filename, unrecognised file type, etc.).
+//   - kind "error":   processing failure (extraction crashed, DB insert
+//     failed, enqueue failed after persistence).
+export interface AnalyzeBatchIssue {
+  id: string;
+  batch_id: string;
+  document_id?: string;
+  filename: string;
+  kind: "skipped" | "error";
+  message: string;
+  created_at: string;
+}
+
+// AnalyzeParseResultIssue mirrors the backend ParseResultIssue —
+// stage-level problems on a parse_result, persisted to
+// `parse_result_issues`, served by GET /parse_results/{id}/issues.
+// Covers Phases 2 (parse) and 3 (ingest).
+//   - kind "fatal":              generic stage failure.
+//   - kind "systematic_invalid": column-mapping problem (majority of
+//     ISRC/UPC values failed validation).
+export interface AnalyzeParseResultIssue {
+  id: string;
+  parse_result_id: string;
+  stage_run_id: string;
+  severity: "error" | "warning";
+  kind: "fatal" | "systematic_invalid";
+  field?: string;
+  message: string;
+  context?: unknown;
+  created_at: string;
+}
+
+// AnalyzeParsedRowIssue mirrors the backend ParsedRowIssue —
+// row-level problems under a parse_result, persisted to
+// `parsed_row_issues`, served by
+// GET /parse_results/{id}/row_issues. Covers Phase 4 (royalty_lines)
+// row-level processing failures.
+export interface AnalyzeParsedRowIssue {
+  id: string;
+  parsed_row_id: string;
+  stage_run_id: string;
+  severity: "error" | "warning";
+  field?: string;
+  message: string;
+  created_at: string;
 }
 
 export type Step =
@@ -71,7 +104,6 @@ export interface AnalyzeState {
   assignedCatalogId: string;
   assignedCatalogName: string;
   documents: AnalyzeDocument[];
-  skipped: { filename: string; reason: string }[];
   works: AnalyzeWork[];
   importDone: boolean;
   uploadProgress: number;
@@ -88,7 +120,6 @@ export const INITIAL_STATE: AnalyzeState = {
   assignedCatalogId: "",
   assignedCatalogName: "",
   documents: [],
-  skipped: [],
   works: [],
   importDone: false,
   uploadProgress: 0,

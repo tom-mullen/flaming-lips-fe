@@ -5,13 +5,16 @@ import type { Step, AnalyzeDocument } from "./types";
 // Works are NOT persisted — they're rebuilt from the batch stream replay on
 // restore, and their nested recordings/releases arrays blow past the ~5MB
 // sessionStorage quota on larger batches.
+// Issue-related lists (batch_issues, parse_result_issues, parsed_row_issues)
+// are NOT persisted — they are durable on the server and fetched fresh on
+// restore from their dedicated endpoints, so sessionStorage doesn't need to
+// carry them.
 interface AnalyzeBookmark {
   step: Step;
   catalogId: string;
   catalogName: string;
   batchId: string;
   documents: AnalyzeDocument[];
-  skipped: { filename: string; reason: string }[];
   parseCompleteCount: number;
   ingestCompleteCount: number;
   royaltyLinesExpectedCount: number;
@@ -34,7 +37,6 @@ const INITIAL: AnalyzeBookmark = {
   catalogName: "",
   batchId: "",
   documents: [],
-  skipped: [],
   parseCompleteCount: 0,
   ingestCompleteCount: 0,
   royaltyLinesExpectedCount: 0,
@@ -71,7 +73,6 @@ export const useAnalyzeStore = create<AnalyzeStore>()(
         catalogName: state.catalogName,
         batchId: state.batchId,
         documents: state.documents,
-        skipped: state.skipped,
         parseCompleteCount: state.parseCompleteCount,
         ingestCompleteCount: state.ingestCompleteCount,
         royaltyLinesExpectedCount: state.royaltyLinesExpectedCount,
