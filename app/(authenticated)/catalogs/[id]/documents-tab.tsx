@@ -70,7 +70,7 @@ export default function DocumentsTab({
     return (
       <EmptyState>
         No documents yet. Upload files from the{" "}
-        <a href="/analyze" className="text-spotify hover:underline">
+        <a href="/analyze" className="text-brand hover:underline">
           Analyze
         </a>{" "}
         page.

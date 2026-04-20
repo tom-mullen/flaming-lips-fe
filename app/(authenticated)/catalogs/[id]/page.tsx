@@ -68,7 +68,7 @@ export default function CatalogShowPage() {
   if (!catalog) return null;
 
   const tabClassName =
-    "px-4 py-2.5 text-sm font-medium capitalize transition-colors cursor-pointer -mb-px text-muted hover:text-foreground data-[selected]:text-white data-[selected]:border-b-2 data-[selected]:border-spotify focus-ring";
+    "px-4 py-2.5 text-sm font-medium capitalize transition-colors cursor-pointer -mb-px text-muted hover:text-foreground data-[selected]:text-white data-[selected]:border-b-2 data-[selected]:border-brand focus-ring";
 
   return (
     <PageLayout>

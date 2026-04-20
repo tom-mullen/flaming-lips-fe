@@ -26,7 +26,7 @@ export default function Checkbox({
         "flex size-4 shrink-0 cursor-pointer items-center justify-center rounded border transition-colors",
         "focus-ring focus-visible:ring-offset-surface focus-visible:ring-offset-1 disabled:cursor-default disabled:opacity-50",
         checked
-          ? "bg-spotify border-spotify"
+          ? "bg-brand border-brand"
           : "bg-surface-alt border-zinc-600",
         className,
       )}

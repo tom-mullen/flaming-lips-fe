@@ -36,7 +36,7 @@ export default function ProgressBar({
       >
         <div
           className={cn(
-            "bg-spotify h-full rounded-full transition-all duration-500",
+            "bg-brand h-full rounded-full transition-all duration-500",
             pulse && "animate-pulse",
           )}
           style={{ width: `${pct}%` }}

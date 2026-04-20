@@ -61,7 +61,7 @@ export default function Select({
                   </span>
                   {selected && (
                     <CheckIcon
-                      className="text-spotify size-4 shrink-0"
+                      className="text-brand size-4 shrink-0"
                       strokeWidth={2.5}
                     />
                   )}

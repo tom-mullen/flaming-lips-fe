@@ -14,7 +14,7 @@ const badgeVariants = cva(
         blue: "bg-blue-500/15 text-blue-400",
         purple: "bg-purple-500/15 text-purple-400",
         teal: "bg-teal-500/15 text-teal-400",
-        spotify: "bg-spotify/15 text-spotify",
+        brand: "bg-brand/15 text-brand",
       },
     },
     defaultVariants: {

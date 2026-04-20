@@ -7,7 +7,7 @@ const buttonVariants = cva(
     variants: {
       variant: {
         primary:
-          "bg-spotify text-black font-bold hover:bg-spotify-hover active:scale-95",
+          "bg-brand text-black font-bold hover:bg-brand-hover active:scale-95",
         secondary:
           "border border-border text-foreground hover:text-white hover:border-border-focus",
         danger: "border border-red-500/30 text-red-400 hover:bg-red-500/15",

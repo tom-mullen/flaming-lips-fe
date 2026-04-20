@@ -54,7 +54,7 @@ export default function Pagination({
               className={cn(
                 "focus-ring min-w-[36px] cursor-pointer rounded-lg px-3 py-1.5 text-sm font-medium transition-colors",
                 p === page
-                  ? "bg-spotify text-black"
+                  ? "bg-brand text-black"
                   : "text-muted-foreground hover:bg-surface-alt hover:text-white",
               )}
             >

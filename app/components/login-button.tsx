@@ -41,7 +41,7 @@ const providers = {
   },
   spotify: {
     label: "Continue with Spotify",
-    icon: <SpotifyIcon className="text-spotify size-5" />,
+    icon: <SpotifyIcon className="text-brand size-5" />,
   },
 } as const;
 

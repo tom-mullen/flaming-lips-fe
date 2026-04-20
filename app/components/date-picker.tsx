@@ -85,8 +85,8 @@ export default function DatePicker({
               day: "w-9 h-9 flex items-center justify-center text-sm",
               day_button:
                 "w-full h-full flex items-center justify-center rounded-lg hover:bg-surface-alt transition-colors cursor-pointer",
-              selected: "bg-spotify text-black font-semibold rounded-lg",
-              today: "font-bold text-spotify",
+              selected: "bg-brand text-black font-semibold rounded-lg",
+              today: "font-bold text-brand",
               outside: "text-faint",
               disabled: "text-zinc-800",
               chevron: "fill-current size-4",

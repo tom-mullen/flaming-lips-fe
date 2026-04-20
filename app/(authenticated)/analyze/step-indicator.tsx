@@ -31,7 +31,7 @@ export default function StepIndicator({ current }: { current: Step }) {
               <div
                 className={cn(
                   "h-px w-8",
-                  isPast || isActive ? "bg-spotify" : "bg-surface-raised",
+                  isPast || isActive ? "bg-brand" : "bg-surface-raised",
                 )}
               />
             )}
@@ -39,7 +39,7 @@ export default function StepIndicator({ current }: { current: Step }) {
               className={cn(
                 "rounded-full px-3 py-1 font-semibold whitespace-nowrap",
                 isActive
-                  ? "bg-spotify text-black"
+                  ? "bg-brand text-black"
                   : isPast
                     ? "bg-surface-raised text-white"
                     : "bg-surface-alt text-muted",

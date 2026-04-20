@@ -3,8 +3,8 @@
 @theme inline {
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
-  --color-spotify: #1db954;
-  --color-spotify-hover: #1ed760;
+  --color-brand: #c9ff86;
+  --color-brand-hover: #d8ffa3;
 
   /* Semantic surface & border tokens
      Note: surface-alt & border-subtle share zinc-800 (#27272a);
@@ -32,7 +32,7 @@
 
 /* Focus ring — single source of truth for interactive elements */
 .focus-ring {
-  @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-spotify/50;
+  @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/50;
 }
 
 /* Form control — shared surface for Input, Select, DatePicker, MultiSelect.
@@ -50,7 +50,7 @@
 
 /* Override react-day-picker selected state without !important */
 .rdp-selected .rdp-day_button {
-  background-color: var(--color-spotify);
+  background-color: var(--color-brand);
   color: black;
   font-weight: 600;
   border-radius: var(--radius-lg);

@@ -34,7 +34,7 @@ export default function DropStep({
       className={cn(
         "bg-surface focus-ring cursor-pointer rounded-2xl border-2 border-dashed p-16 text-center transition-colors",
         dragOver
-          ? "border-spotify bg-spotify/5"
+          ? "border-brand bg-brand/5"
           : "border-border hover:border-border-focus",
       )}
     >

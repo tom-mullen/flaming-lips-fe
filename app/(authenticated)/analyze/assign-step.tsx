@@ -97,7 +97,7 @@ export default function AssignStep({
                   className={cn(
                     "focus-ring w-full cursor-pointer rounded-lg px-4 py-3 text-left text-sm transition-colors",
                     selectedCatalog === cat.id
-                      ? "bg-spotify/10 border-spotify/30 border text-white"
+                      ? "bg-brand/10 border-brand/30 border text-white"
                       : "bg-surface-alt text-muted-foreground hover:bg-surface-alt/80 border border-transparent hover:text-white",
                   )}
                 >

@@ -55,7 +55,7 @@ export default function RightRow({
       {sourceDoc && (
         <a
           href={`${API_URL}/catalogs/${catalogId}/documents/${sourceDoc.id}/download`}
-          className="text-spotify max-w-40 shrink-0 truncate text-xs hover:underline"
+          className="text-brand max-w-40 shrink-0 truncate text-xs hover:underline"
           title={sourceDoc.filename}
         >
           Download source

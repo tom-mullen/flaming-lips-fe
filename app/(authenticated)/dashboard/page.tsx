@@ -17,7 +17,7 @@ export default function DashboardPage() {
   return (
     <PageLayout maxWidth="4xl" className="space-y-0">
       <div className="bg-surface overflow-hidden rounded-2xl">
-        <div className="from-spotify/60 to-surface h-24 bg-gradient-to-br" />
+        <div className="from-brand/60 to-surface h-24 bg-gradient-to-br" />
         <div className="px-6 pb-6">
           <div className="-mt-12 mb-4">
             {user.image ? (

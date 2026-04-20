@@ -173,7 +173,7 @@ function MetaField({
           target="_blank"
           rel="noopener noreferrer"
           className={cn(
-            "text-spotify block truncate text-sm hover:underline",
+            "text-brand block truncate text-sm hover:underline",
             mono && "font-mono text-xs",
           )}
         >
