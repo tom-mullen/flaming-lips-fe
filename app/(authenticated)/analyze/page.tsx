@@ -16,6 +16,7 @@ import type {
   AnalyzeWork,
   AnalyzeRecordingRef,
   AnalyzeReleaseRef,
+  AnalyzeIngestionWarning,
 } from "./types";
 import { INITIAL_STATE } from "./types";
 import { useAnalyzeStore, useAnalyzeStoreHydrated } from "./store";
@@ -60,8 +61,18 @@ export default function AnalyzePage() {
     { filename: string; reason: string }[]
   >([]);
   const [works, setWorks] = useState<AnalyzeWork[]>([]);
+  const [warnings, setWarnings] = useState<AnalyzeIngestionWarning[]>([]);
   const [parseCompleteCount, setParseCompleteCount] = useState(0);
+  const [parseFailedCount, setParseFailedCount] = useState(0);
   const [ingestCompleteCount, setIngestCompleteCount] = useState(0);
+  // royaltyLinesExpectedCount is the denominator Phase 4 targets. Only
+  // ingest_complete events that chained a follow-on (royalty_lines_job_id
+  // set) will ever produce a royalty_lines_complete, so total-style
+  // denominators wedge the progress bar when identity ingestion fails
+  // for some docs.
+  const [royaltyLinesExpectedCount, setRoyaltyLinesExpectedCount] =
+    useState(0);
+  const [royaltyLinesCompleteCount, setRoyaltyLinesCompleteCount] = useState(0);
   const [importDone, setImportDone] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [restoring, setRestoring] = useState(true);
@@ -196,10 +207,34 @@ export default function AnalyzePage() {
     // backend to stop the FE from double-counting each document).
     if (data.type === "parse_complete") {
       setParseCompleteCount((n) => n + 1);
+      // Parse failures never enqueue an ingest job, so phase 3 needs to
+      // count them separately — without this, a failed-parse doc would
+      // leave the ingest progress wedged at N-1 of N.
+      if (data.status && data.status !== "complete") {
+        setParseFailedCount((n) => n + 1);
+      }
       return;
     }
     if (data.type === "ingest_complete") {
       setIngestCompleteCount((n) => n + 1);
+      // Only successful ingestions chain a royalty-lines job. Track the
+      // expectation on the FE so Phase 4 knows when it's done without
+      // needing a fixed total.
+      if (typeof data.royalty_lines_job_id === "string") {
+        setRoyaltyLinesExpectedCount((n) => n + 1);
+      }
+      // Warnings are one-per-(document, field). A single batch may produce
+      // dozens; we append flat and group at render time. Ordering isn't
+      // guaranteed across documents, so don't dedupe here — the backend
+      // already collapses per-doc samples.
+      const w = (data as { warnings?: AnalyzeIngestionWarning[] }).warnings;
+      if (Array.isArray(w) && w.length > 0) {
+        setWarnings((prev) => [...prev, ...w]);
+      }
+      return;
+    }
+    if (data.type === "royalty_lines_complete") {
+      setRoyaltyLinesCompleteCount((n) => n + 1);
       return;
     }
     // Other envelopes fall through silently — still visible in network tab.
@@ -267,6 +302,8 @@ export default function AnalyzePage() {
           setImportDone(true);
           setParseCompleteCount(store.parseCompleteCount);
           setIngestCompleteCount(store.ingestCompleteCount);
+          setRoyaltyLinesExpectedCount(store.royaltyLinesExpectedCount);
+          setRoyaltyLinesCompleteCount(store.royaltyLinesCompleteCount);
           setRestoring(false);
           return;
         } else {
@@ -280,12 +317,16 @@ export default function AnalyzePage() {
           catalogName: store.catalogName,
           batchId: store.batchId,
         };
-        // Reconnect from seq=0 — works list and phase counts are rebuilt
-        // from the replay, so we don't rely on persisted values being in
-        // sync with the server.
+        // Reconnect from seq=0 — works list, warnings, and phase counts
+        // are rebuilt from the replay, so we don't rely on persisted
+        // values being in sync with the server.
         setWorks([]);
+        setWarnings([]);
         setParseCompleteCount(0);
+        setParseFailedCount(0);
         setIngestCompleteCount(0);
+        setRoyaltyLinesExpectedCount(0);
+        setRoyaltyLinesCompleteCount(0);
         connectBatch(`/batches/${store.batchId}/stream`);
         setRestoring(false);
       } catch (e) {
@@ -315,6 +356,8 @@ export default function AnalyzePage() {
         skipped,
         parseCompleteCount,
         ingestCompleteCount,
+        royaltyLinesExpectedCount,
+        royaltyLinesCompleteCount,
       });
     }
   }, [
@@ -326,6 +369,8 @@ export default function AnalyzePage() {
     skipped,
     parseCompleteCount,
     ingestCompleteCount,
+    royaltyLinesExpectedCount,
+    royaltyLinesCompleteCount,
     saveBookmark,
   ]);
 
@@ -335,8 +380,12 @@ export default function AnalyzePage() {
     setDocuments(INITIAL_STATE.documents);
     setSkipped(INITIAL_STATE.skipped);
     setWorks(INITIAL_STATE.works);
+    setWarnings([]);
     setParseCompleteCount(INITIAL_STATE.parseCompleteCount);
+    setParseFailedCount(0);
     setIngestCompleteCount(INITIAL_STATE.ingestCompleteCount);
+    setRoyaltyLinesExpectedCount(0);
+    setRoyaltyLinesCompleteCount(INITIAL_STATE.royaltyLinesCompleteCount);
     setImportDone(INITIAL_STATE.importDone);
     setAssignedCatalogId("");
     setAssignedCatalogName("");
@@ -438,8 +487,12 @@ export default function AnalyzePage() {
     setDocuments([]);
     setSkipped([]);
     setWorks([]);
+    setWarnings([]);
     setParseCompleteCount(0);
+    setParseFailedCount(0);
     setIngestCompleteCount(0);
+    setRoyaltyLinesExpectedCount(0);
+    setRoyaltyLinesCompleteCount(0);
     setImportDone(false);
 
     batchCtxRef.current = {
@@ -523,8 +576,13 @@ export default function AnalyzePage() {
           skipped={skipped}
           importDone={importDone}
           works={works}
+          warnings={warnings}
           parseCompleteCount={parseCompleteCount}
+          parseFailedCount={parseFailedCount}
           ingestCompleteCount={ingestCompleteCount}
+          royaltyLinesExpectedCount={royaltyLinesExpectedCount}
+          royaltyLinesCompleteCount={royaltyLinesCompleteCount}
+          batchId={batchId}
           assignedCatalogId={assignedCatalogId}
           assignedCatalogName={assignedCatalogName}
           onFinish={() => setStep("done")}

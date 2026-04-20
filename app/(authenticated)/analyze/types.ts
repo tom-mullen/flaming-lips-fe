@@ -38,6 +38,26 @@ export interface AnalyzeWork {
   releases: AnalyzeReleaseRef[];
 }
 
+// AnalyzeIngestionWarning mirrors the backend IngestionWarning struct
+// carried on the ingest_complete event's `warnings` field. Scoped to a
+// single (document, field) pair — a document with bad ISRCs and bad UPCs
+// will produce two warnings, and a systematic + row-level problem on the
+// same field is never both (systematic aborts ingestion).
+//   - kind "systematic_invalid": the column failed majority-validation;
+//     ingestion aborted for this document. User should fix the payor
+//     mapping and re-upload.
+//   - kind "row_invalid": individual rows dropped to empty; ingestion
+//     proceeded. Informational.
+export interface AnalyzeIngestionWarning {
+  document_id: string;
+  field: "isrc" | "upc";
+  kind: "systematic_invalid" | "row_invalid";
+  invalid_count: number;
+  checked_count?: number;
+  samples?: string[];
+  message?: string;
+}
+
 export type Step =
   | "drop"
   | "assign"
@@ -57,6 +77,8 @@ export interface AnalyzeState {
   uploadProgress: number;
   parseCompleteCount: number;
   ingestCompleteCount: number;
+  royaltyLinesExpectedCount: number;
+  royaltyLinesCompleteCount: number;
   error: string | null;
 }
 
@@ -72,8 +94,32 @@ export const INITIAL_STATE: AnalyzeState = {
   uploadProgress: 0,
   parseCompleteCount: 0,
   ingestCompleteCount: 0,
+  royaltyLinesExpectedCount: 0,
+  royaltyLinesCompleteCount: 0,
   error: null,
 };
+
+// Royalty summary wire shape returned by
+// GET /batches/{id}/royalties/summary. Monetary fields are strings —
+// pgtype.Numeric JSON-marshals as a decimal string to preserve the
+// precision NUMERIC(18,6) would lose in JS's native number type.
+export interface RoyaltySummaryCell {
+  year: number;
+  quarter: number;
+  total: string;
+}
+
+export interface RoyaltyCurrencyTotal {
+  currency: string;
+  total: string;
+}
+
+export interface RoyaltySummary {
+  cells: RoyaltySummaryCell[];
+  unknown_total: string;
+  grand_total_usd: string;
+  other_currencies: RoyaltyCurrencyTotal[];
+}
 
 export const STEP_LABELS = [
   { key: "drop", label: "Add Files" },

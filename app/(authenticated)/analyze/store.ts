@@ -14,6 +14,8 @@ interface AnalyzeBookmark {
   skipped: { filename: string; reason: string }[];
   parseCompleteCount: number;
   ingestCompleteCount: number;
+  royaltyLinesExpectedCount: number;
+  royaltyLinesCompleteCount: number;
   createdAt: number;
 }
 
@@ -35,6 +37,8 @@ const INITIAL: AnalyzeBookmark = {
   skipped: [],
   parseCompleteCount: 0,
   ingestCompleteCount: 0,
+  royaltyLinesExpectedCount: 0,
+  royaltyLinesCompleteCount: 0,
   createdAt: 0,
 };
 
@@ -70,6 +74,8 @@ export const useAnalyzeStore = create<AnalyzeStore>()(
         skipped: state.skipped,
         parseCompleteCount: state.parseCompleteCount,
         ingestCompleteCount: state.ingestCompleteCount,
+        royaltyLinesExpectedCount: state.royaltyLinesExpectedCount,
+        royaltyLinesCompleteCount: state.royaltyLinesCompleteCount,
         createdAt: state.createdAt,
       }),
     },
