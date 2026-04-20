@@ -109,8 +109,13 @@ export async function apiUpload<T = void>(
 export function wsUrl(path: string): string {
   const protocol = API_URL.startsWith("https") ? "wss" : "ws";
   const host = API_URL.replace(/^https?:\/\//, "");
-  const tokenParam = _accessToken
-    ? `?jwt=${encodeURIComponent(_accessToken)}`
-    : "";
+  if (!_accessToken) {
+    return `${protocol}://${host}${path}`;
+  }
+  // Pick "?" vs "&" based on whether the path already carries a query
+  // string. Callers can pass e.g. "/batches/{id}/stream?after_seq=42"
+  // without having to know we're about to tack on a jwt parameter.
+  const separator = path.includes("?") ? "&" : "?";
+  const tokenParam = `${separator}jwt=${encodeURIComponent(_accessToken)}`;
   return `${protocol}://${host}${path}${tokenParam}`;
 }
