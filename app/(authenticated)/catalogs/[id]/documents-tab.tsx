@@ -2,6 +2,7 @@
 
 import { useState, useMemo } from "react";
 import { ArrowDownTrayIcon } from "@heroicons/react/24/outline";
+import FilenameLabel from "@/app/components/filename-label";
 import MultiSelect from "@/app/components/multi-select";
 import Alert from "@/app/components/ui/alert";
 import Card from "@/app/components/ui/card";
@@ -17,7 +18,7 @@ import {
   DOC_BADGE_VARIANTS,
   DOC_CATEGORY_FILTER_COLORS,
 } from "@/app/lib/constants";
-import { apiPost, API_URL } from "@/app/lib/api";
+import { apiPost, downloadUrl } from "@/app/lib/api";
 import { formatBytes, toggleSetItem } from "@/app/lib/utils";
 import type { CatalogDocument } from "@/app/lib/types";
 
@@ -162,7 +163,7 @@ export default function DocumentsTab({
               {DOC_CATEGORY_LABELS[doc.category]}
             </Badge>
             <div className="min-w-0 flex-1">
-              <p className="truncate text-sm text-white">{doc.filename}</p>
+              <FilenameLabel filename={doc.filename} className="text-sm text-white" />
               <div className="text-dimmed flex items-center gap-2 text-xs">
                 <span>{doc.created_at}</span>
                 {doc.payor && <span className="text-muted">{doc.payor}</span>}
@@ -184,7 +185,7 @@ export default function DocumentsTab({
               {formatBytes(doc.size)}
             </p>
             <a
-              href={`${API_URL}/catalogs/${catalogId}/documents/${doc.id}/download`}
+              href={downloadUrl(`/catalogs/${catalogId}/documents/${doc.id}/download`)}
               className="text-muted shrink-0 cursor-pointer transition-colors hover:text-white"
               title="Download"
             >

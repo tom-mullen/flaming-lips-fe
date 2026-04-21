@@ -43,7 +43,9 @@ export default function CatalogRightsTab({
   const batchRemoveRights = useBatchRemoveRights(catalogId);
 
   const { data: worksPage } = useWorks();
-  const works = worksPage?.items ?? [];
+  // Memoise the fallback so downstream useMemos depending on `works`
+  // don't see a new array reference every render.
+  const works = useMemo(() => worksPage?.items ?? [], [worksPage?.items]);
   const workMap = useMemo(
     () => new Map(works.map((w) => [w.id, w])),
     [works],

@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
+import { ArrowDownTrayIcon, ArrowPathIcon } from "@heroicons/react/24/outline";
 import CatalogLink from "@/app/components/catalog-link";
+import FilenameLabel from "@/app/components/filename-label";
 import Badge from "@/app/components/ui/badge";
 import Button, { buttonVariants } from "@/app/components/ui/button";
 import Card from "@/app/components/ui/card";
@@ -12,25 +14,17 @@ import {
   DOC_CATEGORY_LABELS,
   DOC_BADGE_VARIANTS,
 } from "@/app/lib/constants";
-import { api } from "@/app/lib/api";
+import { api, apiPost, downloadUrl } from "@/app/lib/api";
 import { formatBytes } from "@/app/lib/utils";
 import type {
   AnalyzeDocument,
   AnalyzeWork,
   AnalyzeBatchIssue,
-  AnalyzeParseResultIssue,
-  AnalyzeParsedRowIssue,
+  AnalyzeParseResult,
+  AnalyzeParseResultIssueWithDocument,
+  AnalyzeParsedRowIssueWithDocument,
   RoyaltySummary,
 } from "./types";
-
-// ParseResultRef maps a parse_result_id back to the document it belongs
-// to (plus per-stage issue counts). The page owns the mapping; this
-// component only reads it to resolve filenames for fetched issues.
-type ParseResultRef = {
-  document_id: string;
-  stage_issues: number;
-  row_issues: number;
-};
 
 export default function ImportStep({
   documents,
@@ -39,10 +33,11 @@ export default function ImportStep({
   batchIssues,
   parseResultIssues,
   parsedRowIssues,
-  parseResultRefs,
+  parseCompleteMsByDoc,
   parseCompleteCount,
   parseFailedCount,
   ingestCompleteCount,
+  ingestFailedCount,
   royaltyLinesExpectedCount,
   royaltyLinesCompleteCount,
   batchId,
@@ -55,12 +50,13 @@ export default function ImportStep({
   importDone: boolean;
   works: AnalyzeWork[];
   batchIssues: AnalyzeBatchIssue[];
-  parseResultIssues: AnalyzeParseResultIssue[];
-  parsedRowIssues: AnalyzeParsedRowIssue[];
-  parseResultRefs: Record<string, ParseResultRef>;
+  parseResultIssues: AnalyzeParseResultIssueWithDocument[];
+  parsedRowIssues: AnalyzeParsedRowIssueWithDocument[];
+  parseCompleteMsByDoc: Record<string, number>;
   parseCompleteCount: number;
   parseFailedCount: number;
   ingestCompleteCount: number;
+  ingestFailedCount: number;
   royaltyLinesExpectedCount: number;
   royaltyLinesCompleteCount: number;
   batchId: string;
@@ -160,7 +156,7 @@ export default function ImportStep({
                 {DOC_CATEGORY_LABELS[doc.category]}
               </Badge>
               <div className="min-w-0 flex-1">
-                <p className="truncate text-sm text-white">{doc.filename}</p>
+                <FilenameLabel filename={doc.filename} className="text-sm text-white" />
               </div>
               <p className="text-dimmed shrink-0 text-xs">
                 {formatBytes(doc.size)}
@@ -183,8 +179,20 @@ export default function ImportStep({
 
           <div className="flex flex-wrap gap-3">
             <StatCard
-              label="Documents parsed"
-              value={`${parseCompleteCount} / ${total}`}
+              label="Parsed"
+              value={parseCompleteCount - parseFailedCount}
+              large
+              className="px-4 py-3"
+            />
+            <StatCard
+              label="Failed"
+              value={parseFailedCount}
+              large
+              className="px-4 py-3"
+            />
+            <StatCard
+              label="Total"
+              value={total}
               large
               className="px-4 py-3"
             />
@@ -217,18 +225,36 @@ export default function ImportStep({
 
           <div className="flex flex-wrap gap-3">
             <StatCard
-              label="Works"
-              value={works.length}
+              label="Total Parsed"
+              value={parseCompleteCount - parseFailedCount}
               large
               className="px-4 py-3"
             />
             <StatCard
-              label="Documents ingested"
-              value={
-                parseFailedCount > 0
-                  ? `${ingestCompleteCount} / ${total} (${parseFailedCount} skipped)`
-                  : `${ingestCompleteCount} / ${total}`
-              }
+              label="Ingested"
+              value={ingestCompleteCount - ingestFailedCount}
+              color="text-green-400"
+              large
+              className="px-4 py-3"
+            />
+            <StatCard
+              label="Failed"
+              value={ingestFailedCount}
+              color="text-red-400"
+              large
+              className="px-4 py-3"
+            />
+            <StatCard
+              label="Skipped"
+              value={parseFailedCount}
+              color="text-amber-400"
+              large
+              className="px-4 py-3"
+            />
+            <StatCard
+              label="Works Updated"
+              value={works.length}
+              color="text-green-400"
               large
               className="px-4 py-3"
             />
@@ -245,11 +271,7 @@ export default function ImportStep({
               <ProgressBar
                 value={ingestResolvedCount}
                 total={total}
-                label={
-                  parseFailedCount > 0
-                    ? `${ingestCompleteCount} of ${total} ingested, ${parseFailedCount} skipped (parse failed)`
-                    : `${ingestCompleteCount} of ${total} documents ingested`
-                }
+                label={`${ingestResolvedCount} of ${total} documents processed`}
               />
             </Card>
           )}
@@ -258,7 +280,8 @@ export default function ImportStep({
             <ParseResultIssuesList
               issues={parseResultIssues}
               documents={documents}
-              parseResultRefs={parseResultRefs}
+              catalogId={assignedCatalogId}
+              parseCompleteMsByDoc={parseCompleteMsByDoc}
             />
           )}
 
@@ -382,7 +405,12 @@ export default function ImportStep({
           )}
 
           {royaltyLinesAllDone && parsedRowIssues.length > 0 && (
-            <ParsedRowIssuesList issues={parsedRowIssues} />
+            <ParsedRowIssuesList
+              issues={parsedRowIssues}
+              documents={documents}
+              catalogId={assignedCatalogId}
+              parseCompleteMsByDoc={parseCompleteMsByDoc}
+            />
           )}
 
           {royaltyLinesAllDone && (
@@ -482,103 +510,310 @@ function BatchIssuesList({ issues }: { issues: AnalyzeBatchIssue[] }) {
 
 // ParseResultIssuesList renders stage-level issues from
 // `parse_result_issues`. Systematic column-mapping problems get a red
-// accent (ingestion aborted); other fatals get amber.
+// accent (ingestion aborted); other fatals also get red.
+//
+// Dedup: the backend endpoint is the full audit log — a document
+// that's been reparsed has issues from every attempt. We filter to
+// show only the latest parse_result's issues per document (by max
+// issue.created_at as a proxy for parse_result.created_at — they're
+// within milliseconds of each other). Historical attempts remain
+// visible through the attempt-history panel on each card.
 function ParseResultIssuesList({
   issues,
   documents,
-  parseResultRefs,
+  catalogId,
+  parseCompleteMsByDoc,
 }: {
-  issues: AnalyzeParseResultIssue[];
+  issues: AnalyzeParseResultIssueWithDocument[];
   documents: AnalyzeDocument[];
-  parseResultRefs: Record<string, ParseResultRef>;
+  catalogId: string;
+  parseCompleteMsByDoc: Record<string, number>;
 }) {
   const docById = new Map(documents.map((d) => [d.id, d]));
-  const systematic = issues.filter((i) => i.kind === "systematic_invalid");
-  const fatal = issues.filter((i) => i.kind === "fatal");
+  const latest = latestIssuesPerDocument(issues);
+  const systematic = latest.filter((i) => i.kind === "systematic_invalid");
+  const fatal = latest.filter((i) => i.kind === "fatal");
 
-  const filenameFor = (parseResultId: string): string | undefined => {
-    const ref = parseResultRefs[parseResultId];
-    if (!ref) return undefined;
-    return docById.get(ref.document_id)?.filename;
+  const cardPropsFor = (i: AnalyzeParseResultIssueWithDocument) => {
+    const doc = docById.get(i.document_id);
+    const title = doc?.filename ?? `parse_result ${i.parse_result_id.slice(0, 8)}`;
+    const downloadHref =
+      doc && catalogId
+        ? downloadUrl(`/catalogs/${catalogId}/documents/${doc.id}/download`)
+        : undefined;
+    const reparseTarget =
+      doc && catalogId ? { catalogId, documentId: doc.id } : undefined;
+    const attemptHistory =
+      doc && catalogId ? (
+        <AttemptHistory
+          catalogId={catalogId}
+          documentId={doc.id}
+          refreshKey={parseCompleteMsByDoc[doc.id] ?? 0}
+        />
+      ) : null;
+    return { title, downloadHref, reparseTarget, attemptHistory };
   };
 
   return (
     <div className="space-y-3">
       <h4 className="text-sm font-semibold text-white">
-        Ingestion issues ({issues.length})
+        Ingestion issues ({latest.length})
       </h4>
       {systematic.length > 0 && (
         <div className="space-y-2">
-          {systematic.map((i) => (
-            <IssueCard
-              key={i.id}
-              title={
-                filenameFor(i.parse_result_id) ??
-                `parse_result ${i.parse_result_id.slice(0, 8)}`
-              }
-              tag={i.field ?? "systematic_invalid"}
-              message={i.message}
-              severity="high"
-            />
-          ))}
+          {systematic.map((i) => {
+            const { title, downloadHref, reparseTarget, attemptHistory } =
+              cardPropsFor(i);
+            return (
+              <IssueCard
+                key={i.id}
+                title={title}
+                tag={i.field ?? "systematic_invalid"}
+                message={i.message}
+                severity="high"
+                downloadHref={downloadHref}
+                reparseTarget={reparseTarget}
+                completedAtMs={parseCompleteMsByDoc[i.document_id]}
+                details={
+                  <>
+                    <SystematicInvalidDetails context={i.context} />
+                    {attemptHistory}
+                  </>
+                }
+              />
+            );
+          })}
         </div>
       )}
       {fatal.length > 0 && (
         <div className="space-y-2">
-          {fatal.map((i) => (
-            <IssueCard
-              key={i.id}
-              title={
-                filenameFor(i.parse_result_id) ??
-                `parse_result ${i.parse_result_id.slice(0, 8)}`
-              }
-              tag={i.field ?? "fatal"}
-              message={i.message}
-              severity="high"
-            />
-          ))}
+          {fatal.map((i) => {
+            const { title, downloadHref, reparseTarget, attemptHistory } =
+              cardPropsFor(i);
+            return (
+              <IssueCard
+                key={i.id}
+                title={title}
+                tag={i.field || "fatal"}
+                message={i.message}
+                severity="high"
+                downloadHref={downloadHref}
+                reparseTarget={reparseTarget}
+                completedAtMs={parseCompleteMsByDoc[i.document_id]}
+                details={
+                  <>
+                    <FatalDetails context={i.context} />
+                    {attemptHistory}
+                  </>
+                }
+              />
+            );
+          })}
         </div>
       )}
+    </div>
+  );
+}
+
+// SystematicInvalidDetails renders the structured context attached to
+// a systematic_invalid issue (invalid/checked counts + sample bad
+// values). Reveals "ISRC column actually contains APPLE, Consumption,
+// …" — the fastest way to confirm it's a column-mapping issue vs a
+// data-quality issue.
+function SystematicInvalidDetails({ context }: { context: unknown }) {
+  if (!context || typeof context !== "object") return null;
+  const c = context as {
+    invalid_count?: number;
+    checked_count?: number;
+    samples?: string[];
+  };
+  if (!c.samples || c.samples.length === 0) return null;
+  const shown = c.samples.slice(0, 5);
+  return (
+    <div className="text-dimmed border-surface-raised space-y-0.5 border-t pt-2 text-xs">
+      <p className="uppercase tracking-wide">Sample values</p>
+      <ul className="space-y-0.5 font-mono text-white/70">
+        {shown.map((s, idx) => (
+          <li key={idx} className="truncate">
+            {s}
+          </li>
+        ))}
+        {c.samples.length > shown.length && (
+          <li className="text-dimmed italic">
+            +{c.samples.length - shown.length} more
+          </li>
+        )}
+      </ul>
+    </div>
+  );
+}
+
+// FatalDetails renders the structured context attached to a fatal
+// issue. Today only "no canonical columns resolved" fatals carry
+// context (detected_columns + column_count); other fatals have no
+// payload and this renders nothing.
+function FatalDetails({ context }: { context: unknown }) {
+  if (!context || typeof context !== "object") return null;
+  const c = context as {
+    detected_columns?: string[];
+    column_count?: number;
+  };
+  if (!c.detected_columns || c.detected_columns.length === 0) return null;
+  const shown = c.detected_columns.slice(0, 10);
+  const label =
+    typeof c.column_count === "number"
+      ? `Detected columns (${c.column_count})`
+      : "Detected columns";
+  return (
+    <div className="text-dimmed border-surface-raised space-y-0.5 border-t pt-2 text-xs">
+      <p className="uppercase tracking-wide">{label}</p>
+      <ul className="space-y-0.5 font-mono text-white/70">
+        {shown.map((s, idx) => (
+          <li key={idx} className="truncate">
+            {s}
+          </li>
+        ))}
+        {c.detected_columns.length > shown.length && (
+          <li className="text-dimmed italic">
+            +{c.detected_columns.length - shown.length} more
+          </li>
+        )}
+      </ul>
     </div>
   );
 }
 
 // ParsedRowIssuesList renders row-level issues from
-// `parsed_row_issues`. All amber — by design these are non-fatal row
-// drops during royalty_lines processing.
-function ParsedRowIssuesList({ issues }: { issues: AnalyzeParsedRowIssue[] }) {
+// `parsed_row_issues`, grouped by document. One card per document with
+// a download link in its header; per-row issues listed beneath. All
+// amber — by design these are non-fatal row drops during royalty_lines
+// processing.
+function ParsedRowIssuesList({
+  issues,
+  documents,
+  catalogId,
+  parseCompleteMsByDoc,
+}: {
+  issues: AnalyzeParsedRowIssueWithDocument[];
+  documents: AnalyzeDocument[];
+  catalogId: string;
+  parseCompleteMsByDoc: Record<string, number>;
+}) {
+  const docById = new Map(documents.map((d) => [d.id, d]));
+
+  // Dedup then group: the batch endpoint returns issues from every
+  // historical parse_result, so after a reparse we'd get duplicates.
+  // Filter to the latest parse_result per document (max
+  // issue.created_at is a close-enough proxy for parse_result.created_at).
+  // Group the survivors by document_id.
+  const latest = latestRowIssuesPerDocument(issues);
+  const byDocument = new Map<string, AnalyzeParsedRowIssueWithDocument[]>();
+  for (const i of latest) {
+    const bucket = byDocument.get(i.document_id);
+    if (bucket) bucket.push(i);
+    else byDocument.set(i.document_id, [i]);
+  }
+  const groups = Array.from(byDocument.entries()).sort(([a], [b]) => {
+    const an = docById.get(a)?.filename ?? "";
+    const bn = docById.get(b)?.filename ?? "";
+    return an.localeCompare(bn);
+  });
+
   return (
     <div className="space-y-3">
       <h4 className="text-sm font-semibold text-white">
-        Row issues ({issues.length})
+        Row issues ({latest.length})
       </h4>
-      <div className="max-h-[360px] space-y-2 overflow-y-auto">
-        {issues.map((i) => (
-          <IssueCard
-            key={i.id}
-            title={`Row ${i.parsed_row_id.slice(0, 8)}`}
-            tag={i.field ?? i.severity}
-            message={i.message}
-            severity="low"
-          />
-        ))}
+      <div className="max-h-[480px] space-y-3 overflow-y-auto">
+        {groups.map(([docId, docIssues]) => {
+          const doc = docById.get(docId);
+          const title = doc?.filename ?? `Document ${docId.slice(0, 8) || "unknown"}`;
+          return (
+            <Card
+              key={docId || "unknown"}
+              className="space-y-2 rounded-xl border-l-4 border-l-amber-500 px-4 py-3"
+            >
+              <div className="flex items-center justify-between gap-3">
+                <FilenameLabel
+                  filename={title}
+                  className="text-sm font-semibold text-white"
+                />
+                <div className="flex items-center gap-3">
+                  <span className="text-dimmed shrink-0 font-mono text-xs uppercase">
+                    {docIssues.length} row{docIssues.length === 1 ? "" : "s"}
+                  </span>
+                  {doc && catalogId && (
+                    <ReparseButton
+                      catalogId={catalogId}
+                      documentId={doc.id}
+                      completedAtMs={parseCompleteMsByDoc[doc.id]}
+                    />
+                  )}
+                  {doc && catalogId && (
+                    <a
+                      href={downloadUrl(`/catalogs/${catalogId}/documents/${doc.id}/download`)}
+                      className="text-muted shrink-0 cursor-pointer transition-colors hover:text-white"
+                      title="Download"
+                    >
+                      <ArrowDownTrayIcon className="size-4" />
+                    </a>
+                  )}
+                </div>
+              </div>
+              <ul className="border-surface-raised space-y-1 border-t pt-2 text-xs">
+                {docIssues.map((i) => (
+                  <li
+                    key={i.id}
+                    className="flex items-start gap-3 text-white/80"
+                  >
+                    <span className="text-dimmed shrink-0 font-mono uppercase">
+                      {i.field ?? i.severity}
+                    </span>
+                    <span className="text-muted-foreground flex-1">
+                      {i.message}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+              {doc && catalogId && (
+                <AttemptHistory
+                  catalogId={catalogId}
+                  documentId={doc.id}
+                  refreshKey={parseCompleteMsByDoc[doc.id] ?? 0}
+                />
+              )}
+            </Card>
+          );
+        })}
       </div>
     </div>
   );
 }
 
-// IssueCard is the shared card shape for all three issue lists — keeps
-// the visual language consistent across phases.
+// IssueCard is the shared card shape across every issue list — keeps
+// the visual language consistent. `details` renders below the message
+// (for structured context like detected-columns or invalid-value
+// samples). `downloadHref` adds a download icon in the header; when a
+// catalog+document tuple is provided it also renders a Reparse button
+// that re-runs the document through the pipeline.
 function IssueCard({
   title,
   tag,
   message,
   severity,
+  details,
+  downloadHref,
+  reparseTarget,
+  completedAtMs,
 }: {
   title: string;
   tag: string;
   message: string;
   severity: "high" | "low";
+  details?: React.ReactNode;
+  downloadHref?: string;
+  reparseTarget?: { catalogId: string; documentId: string };
+  completedAtMs?: number;
 }) {
   const border =
     severity === "high"
@@ -587,14 +822,238 @@ function IssueCard({
   return (
     <Card className={`space-y-2 rounded-xl px-4 py-3 ${border}`}>
       <div className="flex items-baseline justify-between gap-3">
-        <p className="truncate text-sm font-semibold text-white">{title}</p>
-        <span className="text-dimmed shrink-0 font-mono text-xs uppercase">
-          {tag}
-        </span>
+        <FilenameLabel
+          filename={title}
+          className="text-sm font-semibold text-white"
+        />
+        <div className="flex shrink-0 items-center gap-3">
+          <span className="text-dimmed font-mono text-xs uppercase">{tag}</span>
+          {reparseTarget && (
+            <ReparseButton {...reparseTarget} completedAtMs={completedAtMs} />
+          )}
+          {downloadHref && (
+            <a
+              href={downloadHref}
+              className="text-muted cursor-pointer transition-colors hover:text-white"
+              title="Download"
+            >
+              <ArrowDownTrayIcon className="size-4" />
+            </a>
+          )}
+        </div>
       </div>
       <p className="text-muted-foreground text-xs">{message}</p>
+      {details}
     </Card>
   );
+}
+
+// ReparseButton POSTs to the document's parse endpoint and then
+// waits for the matching parse_complete stream event to flip back to
+// a completed state. `completedAtMs` is the timestamp of the latest
+// parse_complete event for this document, owned by page.tsx. If an
+// event lands after the user's click, we know this reparse finished.
+//
+// State machine:
+//   idle      user hasn't clicked (or previous reparse fully settled)
+//   pending   click fired; POST in flight
+//   queued    POST accepted; waiting for the stream event
+//   completed event landed after click — reparse ran through
+//   failed    POST errored; can retry
+function ReparseButton({
+  catalogId,
+  documentId,
+  completedAtMs,
+}: {
+  catalogId: string;
+  documentId: string;
+  completedAtMs?: number;
+}) {
+  const [state, setState] = useState<
+    "idle" | "pending" | "queued" | "failed"
+  >("idle");
+  const [clickedAtMs, setClickedAtMs] = useState(0);
+
+  // Derive "completed" from props + state — no setState-in-effect.
+  // A new parse_complete for this document landing after our click
+  // means the pipeline ran to our reparse.
+  const effective: "idle" | "pending" | "queued" | "completed" | "failed" =
+    state === "queued" &&
+    completedAtMs !== undefined &&
+    completedAtMs > clickedAtMs
+      ? "completed"
+      : state;
+
+  async function onClick() {
+    if (effective === "pending" || effective === "queued") return;
+    setClickedAtMs(Date.now());
+    setState("pending");
+    try {
+      await apiPost(`/catalogs/${catalogId}/documents/${documentId}/parse`, {});
+      setState("queued");
+    } catch (e) {
+      console.error("reparse failed", e);
+      setState("failed");
+    }
+  }
+
+  const label =
+    effective === "pending"
+      ? "Queueing..."
+      : effective === "queued"
+        ? "Queued"
+        : effective === "completed"
+          ? "Reparsed"
+          : effective === "failed"
+            ? "Retry"
+            : "Reparse";
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={effective === "pending" || effective === "queued"}
+      className="text-muted flex cursor-pointer items-center gap-1 text-xs uppercase tracking-wide transition-colors hover:text-white disabled:cursor-default disabled:opacity-60"
+      title="Re-run this document through the pipeline"
+    >
+      <ArrowPathIcon className="size-4" />
+      {label}
+    </button>
+  );
+}
+
+// latestIssuesPerDocument filters a flat audit-log list down to just
+// the issues from each document's latest parse_result. Uses each
+// parse_result's max issue.created_at as the timestamp proxy — issues
+// are persisted within milliseconds of their parse_result, so this is
+// a reliable ordering.
+function latestIssuesPerDocument(
+  issues: AnalyzeParseResultIssueWithDocument[],
+): AnalyzeParseResultIssueWithDocument[] {
+  return pickLatestPerDocument(issues);
+}
+
+function latestRowIssuesPerDocument(
+  issues: AnalyzeParsedRowIssueWithDocument[],
+): AnalyzeParsedRowIssueWithDocument[] {
+  return pickLatestPerDocument(issues);
+}
+
+// pickLatestPerDocument is the shared dedup: bucket issues by
+// (document_id, parse_result_id), for each document pick the
+// parse_result whose issues have the max created_at, return that
+// bucket's issues. Rows without parse_result_id (row issues) fall
+// back to document-only grouping → returns all issues for the doc.
+function pickLatestPerDocument<
+  T extends {
+    document_id: string;
+    created_at: string;
+    parse_result_id?: string;
+  },
+>(issues: T[]): T[] {
+  const byDoc = new Map<string, T[]>();
+  for (const i of issues) {
+    const bucket = byDoc.get(i.document_id);
+    if (bucket) bucket.push(i);
+    else byDoc.set(i.document_id, [i]);
+  }
+  const out: T[] = [];
+  for (const docIssues of byDoc.values()) {
+    if (!docIssues[0].parse_result_id) {
+      out.push(...docIssues);
+      continue;
+    }
+    const byPr = new Map<string, { issues: T[]; maxMs: number }>();
+    for (const i of docIssues) {
+      const prId = i.parse_result_id!;
+      const ms = Date.parse(i.created_at);
+      const entry = byPr.get(prId);
+      if (entry) {
+        entry.issues.push(i);
+        if (ms > entry.maxMs) entry.maxMs = ms;
+      } else {
+        byPr.set(prId, { issues: [i], maxMs: ms });
+      }
+    }
+    let latest: { issues: T[]; maxMs: number } | undefined;
+    for (const entry of byPr.values()) {
+      if (!latest || entry.maxMs > latest.maxMs) latest = entry;
+    }
+    if (latest) out.push(...latest.issues);
+  }
+  return out;
+}
+
+// AttemptHistory lists every parse_result for a document so the user
+// can confirm a reparse actually ran. Fetches
+// GET /catalogs/{id}/documents/{docId}/parse_results once on mount
+// and refetches whenever `refreshKey` changes — page.tsx passes the
+// document's last parse_complete timestamp, so a fresh attempt
+// triggers a refetch.
+function AttemptHistory({
+  catalogId,
+  documentId,
+  refreshKey,
+}: {
+  catalogId: string;
+  documentId: string;
+  refreshKey: number;
+}) {
+  const [attempts, setAttempts] = useState<AnalyzeParseResult[] | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const list = await api<AnalyzeParseResult[]>(
+          `/catalogs/${catalogId}/documents/${documentId}/parse_results`,
+        );
+        if (!cancelled) setAttempts(list);
+      } catch (e) {
+        console.error("failed to load parse_results", documentId, e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [catalogId, documentId, refreshKey]);
+
+  if (!attempts || attempts.length === 0) return null;
+  // Most recent first — matches the backend default order.
+  const sorted = [...attempts].sort(
+    (a, b) => Date.parse(b.created_at) - Date.parse(a.created_at),
+  );
+  return (
+    <div className="text-dimmed border-surface-raised space-y-0.5 border-t pt-2 text-xs">
+      <p className="uppercase tracking-wide">
+        Attempts ({attempts.length})
+      </p>
+      <ul className="space-y-0.5 font-mono text-white/70">
+        {sorted.map((a, idx) => (
+          <li key={a.id} className="flex items-center gap-2">
+            <span className="shrink-0">{formatAttemptTime(a.created_at)}</span>
+            {idx === 0 && (
+              <span className="text-dimmed uppercase text-[10px]">latest</span>
+            )}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+const attemptTimeFormatter = new Intl.DateTimeFormat(undefined, {
+  year: "numeric",
+  month: "short",
+  day: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+});
+
+function formatAttemptTime(iso: string): string {
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return iso;
+  return attemptTimeFormatter.format(t);
 }
 
 // RoyaltySummaryTable fetches the batch summary and pivots the flat

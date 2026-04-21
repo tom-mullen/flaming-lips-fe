@@ -1,4 +1,5 @@
-import AppIcon from "./components/app-icon";
+import Image from "next/image";
+import logo from "./logo.png";
 import LoginButton from "./components/login-button";
 import Alert from "./components/ui/alert";
 
@@ -32,7 +33,12 @@ export default async function HomePage({
     <div className="bg-canvas flex min-h-screen flex-col items-center justify-center px-4">
       <div className="w-full max-w-sm">
         <div className="mb-10 flex justify-center">
-          <AppIcon className="text-white size-10" />
+          <Image
+            src={logo}
+            alt="Standard Innovation"
+            className="size-10 object-contain"
+            priority
+          />
         </div>
 
         <div className="bg-surface rounded-2xl px-8 py-10 shadow-xl">

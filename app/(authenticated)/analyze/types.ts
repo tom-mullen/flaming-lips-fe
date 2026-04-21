@@ -91,6 +91,39 @@ export interface AnalyzeParsedRowIssue {
   created_at: string;
 }
 
+// AnalyzeParseResult is the wire-format for
+// GET /catalogs/{id}/documents/{docId}/parse_results — minimal per-
+// attempt metadata used by the attempt-history panel on each issue
+// card. Additional fields (column_map, summary) are deliberately
+// omitted; the FE only needs timestamps + ids for the history view.
+export interface AnalyzeParseResult {
+  id: string;
+  document_id: string;
+  parser: string;
+  row_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+// AnalyzeParseResultIssueWithDocument is the wire-format for the
+// batch-scoped stage-issue endpoint
+// (GET /batches/{id}/parse_result_issues). Adds `document_id` so the
+// FE can render filename / download / reparse in one round-trip,
+// without a per-parse_result lookup.
+export interface AnalyzeParseResultIssueWithDocument
+  extends AnalyzeParseResultIssue {
+  document_id: string;
+}
+
+// AnalyzeParsedRowIssueWithDocument is the wire-format for the
+// batch-scoped row-issue endpoint
+// (GET /batches/{id}/parsed_row_issues). Adds `document_id` so the
+// FE can group row issues by document directly.
+export interface AnalyzeParsedRowIssueWithDocument
+  extends AnalyzeParsedRowIssue {
+  document_id: string;
+}
+
 export type Step =
   | "drop"
   | "assign"

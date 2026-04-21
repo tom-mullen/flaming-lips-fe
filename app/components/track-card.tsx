@@ -8,7 +8,7 @@ import {
 import { cn } from "@/app/lib/cn";
 import Card from "./ui/card";
 import SectionLabel from "./ui/section-label";
-import type { TrackCardTrack, EnrichmentStatus, TrackCardIdentifier } from "@/app/lib/types";
+import type { TrackCardTrack, EnrichmentStatus } from "@/app/lib/types";
 
 function formatDuration(ms: number) {
   const mins = Math.floor(ms / 60000);

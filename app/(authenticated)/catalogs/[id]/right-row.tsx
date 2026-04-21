@@ -3,7 +3,7 @@ import Button from "@/app/components/ui/button";
 import Card from "@/app/components/ui/card";
 import Checkbox from "@/app/components/ui/checkbox";
 import { TYPE_BADGE_VARIANTS } from "@/app/lib/constants";
-import { API_URL } from "@/app/lib/api";
+import { downloadUrl } from "@/app/lib/api";
 import type { CatalogDocument, RightDisplayFields } from "@/app/lib/types";
 
 interface RightRowProps {
@@ -54,7 +54,7 @@ export default function RightRow({
       )}
       {sourceDoc && (
         <a
-          href={`${API_URL}/catalogs/${catalogId}/documents/${sourceDoc.id}/download`}
+          href={downloadUrl(`/catalogs/${catalogId}/documents/${sourceDoc.id}/download`)}
           className="text-brand max-w-40 shrink-0 truncate text-xs hover:underline"
           title={sourceDoc.filename}
         >

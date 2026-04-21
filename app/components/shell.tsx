@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { usePathname } from "next/navigation";
+import Image from "next/image";
 import Link from "next/link";
 import {
   Dialog,
@@ -20,7 +21,7 @@ import {
   ArrowRightStartOnRectangleIcon,
 } from "@heroicons/react/24/outline";
 import { signOut } from "next-auth/react";
-import AppIcon from "./app-icon";
+import logo from "@/app/logo.png";
 import { cn } from "@/app/lib/cn";
 
 const navigation = [
@@ -42,8 +43,13 @@ export default function Shell({ children }: { children: React.ReactNode }) {
   const sidebarContent = (
     <>
       <div className="flex h-16 shrink-0 items-center gap-2 px-6">
-        <AppIcon className="text-white size-8" />
-        <span className="font-semibold text-white">Music Rights</span>
+        <Image
+          src={logo}
+          alt=""
+          className="size-8 object-contain"
+          priority
+        />
+        <span className="font-semibold text-white">Standard Innovation</span>
       </div>
 
       <nav className="flex flex-1 flex-col px-3 py-4">
@@ -140,9 +146,14 @@ export default function Shell({ children }: { children: React.ReactNode }) {
             <Bars3Icon className="text-muted-foreground size-6" />
           </button>
           <div className="flex items-center gap-2">
-            <AppIcon className="text-white size-5" />
+            <Image
+              src={logo}
+              alt=""
+              className="size-5 object-contain"
+              priority
+            />
             <span className="text-sm font-semibold text-white">
-              Music Rights
+              Standard Innovation
             </span>
           </div>
         </div>

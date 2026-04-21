@@ -119,3 +119,17 @@ export function wsUrl(path: string): string {
   const tokenParam = `${separator}jwt=${encodeURIComponent(_accessToken)}`;
   return `${protocol}://${host}${path}${tokenParam}`;
 }
+
+/**
+ * Build an authenticated download URL from an API path. Plain `<a href>`
+ * clicks don't send the Authorization header, so the token rides as a
+ * query param — the API's jwtauth verifier accepts TokenFromQuery
+ * alongside TokenFromHeader / TokenFromCookie.
+ */
+export function downloadUrl(path: string): string {
+  if (!_accessToken) {
+    return `${API_URL}${path}`;
+  }
+  const separator = path.includes("?") ? "&" : "?";
+  return `${API_URL}${path}${separator}jwt=${encodeURIComponent(_accessToken)}`;
+}

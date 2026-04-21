@@ -16,7 +16,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Music Rights",
+  title: "Standard Innovation",
   description: "Music rights management platform",
 };
 
