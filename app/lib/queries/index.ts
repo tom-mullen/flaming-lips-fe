@@ -5,6 +5,7 @@ export {
   useCreateWork,
   useUpdateWork,
   useBatchDeleteWorks,
+  useEnrichWorks,
 } from "./works";
 export {
   useCatalogs,
@@ -32,4 +33,4 @@ export {
   useUpdateRelease,
   useDeleteRelease,
 } from "./releases";
-export { useEnrichTracks } from "./enrich";
+export { useEnrichTracks, useApplyEnrichment } from "./enrich";

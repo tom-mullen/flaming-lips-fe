@@ -122,7 +122,7 @@ export default function CatalogShowPage() {
           </Tab>
         </TabList>
 
-        <TabPanels>
+        <TabPanels className="mt-6">
           <TabPanel>
             <CatalogRightsTab
               catalogId={params.id}

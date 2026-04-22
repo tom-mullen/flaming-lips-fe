@@ -14,11 +14,16 @@ export type AliasSource =
   | "enrichment"
   | "manual"
   | "merge";
-export type RecordingEnrichmentStatus =
+// EnrichmentCacheStatus is the coarse-grained enrichment state stored on
+// a work/recording/release row itself. Distinct from EnrichmentStatus,
+// which is the per-attempt outcome on the enrichments table.
+export type EnrichmentCacheStatus =
   | "pending"
   | "enriched"
   | "failed"
   | "skipped";
+// Kept as an alias for the existing public surface.
+export type RecordingEnrichmentStatus = EnrichmentCacheStatus;
 export type ReleaseType =
   | "album"
   | "single"
@@ -47,6 +52,11 @@ export interface Work {
   merged_into_work_id: string | null;
   created_at: string;
   updated_at: string;
+  enrichment_status: EnrichmentCacheStatus;
+  last_enriched_at: string | null;
+  // Write-once artwork URL set on first enrichment. Empty when the
+  // work has never been enriched — the UI renders a placeholder.
+  artwork_url: string;
 }
 
 // ─── Recordings ───
@@ -63,7 +73,8 @@ export interface Recording {
   preview_url: string;
   artwork_url: string;
   first_release_date: string | null;
-  enrichment_status: RecordingEnrichmentStatus;
+  enrichment_status: EnrichmentCacheStatus;
+  last_enriched_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -178,15 +189,23 @@ export interface EnrichedTrack {
   duration_ms: number;
 }
 
+export interface LookupMatches {
+  recording?: Recording;
+  work?: Work;
+}
+
 export interface TrackResult {
   input: TrackIdentifier;
   status: TrackMatchStatus;
   confidence: number;
   track: EnrichedTrack | null;
   message?: string;
+  // Populated when the matched track's ISRC resolves to a recording we
+  // already have. Lets the form offer "update existing" actions.
+  matches?: LookupMatches;
 }
 
-export interface EnrichResponse {
+export interface LookupResponse {
   results: TrackResult[];
   summary: {
     total: number;
@@ -194,6 +213,13 @@ export interface EnrichResponse {
     low_confidence: number;
     no_match: number;
   };
+}
+
+// Response shape from PATCH /works/{workId}/enrichments. Recording is
+// present only when the track's ISRC matched a recording under the work.
+export interface WorkEnrichmentResult {
+  work: Work;
+  recording?: Recording;
 }
 
 // ─── Shared track display fields (used by TrackCard — enrichment artifact) ───

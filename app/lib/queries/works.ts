@@ -1,12 +1,29 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, apiPost, apiPatch } from "@/app/lib/api";
-import type { Work, Page } from "@/app/lib/types";
+import type { Job, Work, Page } from "@/app/lib/types";
 import { queries } from "./keys";
 
 export function useWorks() {
   return useQuery({
     ...queries.works.all,
-    queryFn: ({ signal }) => api<Page<Work>>("/works", { signal }),
+    // Fetch all pages client-side — mirrors useDocuments. The backend
+    // paginates with opaque cursors (default limit 100, max 500); this
+    // flattens every page so the UI can use numeric pagination over
+    // the full set.
+    queryFn: async ({ signal }) => {
+      const items: Work[] = [];
+      let cursor: string | undefined;
+      do {
+        const qs = new URLSearchParams({ limit: "500" });
+        if (cursor) qs.set("cursor", cursor);
+        const page = await api<Page<Work>>(`/works?${qs.toString()}`, {
+          signal,
+        });
+        items.push(...page.items);
+        cursor = page.next_cursor;
+      } while (cursor);
+      return { items, next_cursor: undefined } satisfies Page<Work>;
+    },
   });
 }
 
@@ -55,5 +72,26 @@ export function useBatchDeleteWorks() {
       apiPost("/works/batch-delete", { work_ids: ids }),
     onSuccess: () =>
       qc.invalidateQueries({ queryKey: queries.works._def }),
+  });
+}
+
+// useEnrichWorks kicks off a batch enrichment job. Returns the tracking
+// Job so the caller can open the /jobs/{id}/stream WebSocket for
+// progress events. Cache invalidation happens after the stream
+// completes, not here — the returned Job is still "pending" at this
+// point.
+export function useEnrichWorks() {
+  return useMutation({
+    mutationFn: ({
+      work_ids,
+      overwrite,
+    }: {
+      work_ids: string[];
+      overwrite: boolean;
+    }) =>
+      apiPost<Job>("/jobs", {
+        type: "enrich_works",
+        params: { work_ids, overwrite },
+      }),
   });
 }

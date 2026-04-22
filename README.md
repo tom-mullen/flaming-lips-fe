@@ -94,7 +94,7 @@ app/
 │   ├── api.ts                # fetch wrapper, bearer token storage, WebSocket URL builder
 │   ├── types.ts              # All domain types (Work, Recording, Right, Page<T>, etc.)
 │   ├── constants.ts          # Enum lists and visual mappings
-│   ├── hooks/                # useJobStream, useEnrichJob
+│   ├── hooks/                # useJobStream
 │   └── queries/              # React Query hooks (one file per resource)
 ├── globals.css               # Tailwind + custom color tokens
 └── layout.tsx                # Root layout — AuthProvider, QueryProvider, ErrorBoundary

@@ -1,12 +1,17 @@
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
-import type { EnrichResponse } from "@/app/lib/types";
+import type { LookupResponse, WorkEnrichmentResult } from "@/app/lib/types";
 
 interface EnrichStore {
-  current: EnrichResponse | null;
-  history: EnrichResponse[];
-  setCurrent: (response: EnrichResponse | null) => void;
-  pushToHistory: (response: EnrichResponse) => void;
+  current: LookupResponse | null;
+  history: LookupResponse[];
+  setCurrent: (response: LookupResponse | null) => void;
+  pushToHistory: (response: LookupResponse) => void;
+  // applyWorkEnrichment merges a successful PATCH response into the
+  // current lookup so the re-rendered card carries the fresh
+  // last_enriched_at + any patched fields. Session-persisted, so the
+  // "last updated on …" label survives a page refresh.
+  applyWorkEnrichment: (workId: string, result: WorkEnrichmentResult) => void;
 }
 
 export const useEnrichStore = create<EnrichStore>()(
@@ -17,6 +22,22 @@ export const useEnrichStore = create<EnrichStore>()(
       setCurrent: (response) => set({ current: response }),
       pushToHistory: (response) =>
         set((state) => ({ history: [response, ...state.history] })),
+      applyWorkEnrichment: (workId, result) =>
+        set((state) => {
+          if (!state.current) return state;
+          const results = state.current.results.map((r) => {
+            if (r.matches?.work?.id !== workId) return r;
+            return {
+              ...r,
+              matches: {
+                ...r.matches,
+                work: result.work,
+                recording: result.recording ?? r.matches?.recording,
+              },
+            };
+          });
+          return { current: { ...state.current, results } };
+        }),
     }),
     {
       name: "enrich-session",

@@ -16,6 +16,22 @@ function formatDuration(ms: number) {
   return `${mins}:${secs}`;
 }
 
+// formatReleaseDate strips the time element off an ISO8601 timestamp.
+// Spotify returns dates with varying precision (year-only, year-month,
+// year-month-day) which the backend normalises to midnight UTC; we only
+// care about the date part in the UI. Empty input passes through so the
+// MetaField em-dash fallback still shows.
+function formatReleaseDate(value: string): string {
+  if (!value) return value;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+}
+
 interface TrackCardProps {
   track: TrackCardTrack;
   defaultExpanded?: boolean;
@@ -75,7 +91,10 @@ export default function TrackCard({
                 mono
               />
             ))}
-            <MetaField label="Release Date" value={track.release_date} />
+            <MetaField
+              label="Release Date"
+              value={formatReleaseDate(track.release_date)}
+            />
             <MetaField
               label="Duration"
               value={formatDuration(track.duration_ms)}

@@ -4,6 +4,7 @@ import TrackCard from "@/app/components/track-card";
 import Badge from "@/app/components/ui/badge";
 import Card from "@/app/components/ui/card";
 import AddButton from "./add-button";
+import UpdateButton from "./update-button";
 import type { TrackResult, TrackMatchStatus, TrackCardTrack } from "@/app/lib/types";
 
 function enrichedTrackToCardTrack(track: TrackResult["track"] & {}): TrackCardTrack {
@@ -40,6 +41,17 @@ export default function ResultCard({ result, defaultExpanded }: ResultCardProps)
     inputLabel = "Search: (empty)";
   }
 
+  // If the track resolved to something we already own, offer the update
+  // action. Otherwise fall back to the "add as new work" action.
+  const match = result.matches?.recording ? result.matches : undefined;
+  const action =
+    result.track &&
+    (match ? (
+      <UpdateButton track={result.track} matches={match} />
+    ) : (
+      <AddButton track={result.track} />
+    ));
+
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-2">
@@ -58,7 +70,7 @@ export default function ResultCard({ result, defaultExpanded }: ResultCardProps)
         <TrackCard
           track={enrichedTrackToCardTrack(result.track)}
           defaultExpanded={defaultExpanded}
-          action={<AddButton track={result.track} />}
+          action={action}
         />
       ) : (
         result.message && (
